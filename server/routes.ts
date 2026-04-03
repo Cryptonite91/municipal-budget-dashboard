@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { seedDatabase } from "./seed";
+import { runMigrations } from "./migrate";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as XLSX from "xlsx";
@@ -43,6 +44,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  runMigrations();
   seedDatabase();
 
   // ── Auth ──────────────────────────────────────────────────────────────────
