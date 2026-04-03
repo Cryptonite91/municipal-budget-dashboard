@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthProvider } from "@/hooks/use-auth";
 import Dashboard from "@/pages/dashboard";
 import Revenue from "@/pages/revenue";
 import Spending from "@/pages/spending";
@@ -78,10 +79,12 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ThemeProvider>
-          <Router hook={useHashLocation}>
-            <AppLayout />
-          </Router>
-          <Toaster />
+          <AuthProvider>
+            <Router hook={useHashLocation}>
+              <AppLayout />
+            </Router>
+            <Toaster />
+          </AuthProvider>
         </ThemeProvider>
       </TooltipProvider>
     </QueryClientProvider>

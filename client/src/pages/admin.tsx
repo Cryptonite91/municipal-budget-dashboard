@@ -1,17 +1,85 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 import type { UploadHistory } from "@shared/schema";
-import { Upload, FileText, CheckCircle2, AlertCircle, Download } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertCircle, Download, Lock, LogOut, ShieldCheck } from "lucide-react";
 
-export default function Admin() {
+function LoginGate() {
+  const { login, isLoading, error } = useAuth();
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await login(password);
+  };
+
+  return (
+    <div className="p-4 md:p-6 max-w-[1000px] mx-auto">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold">Data Upload</h1>
+        <p className="text-sm text-muted-foreground">
+          Upload budget data for your municipality. CSV format accepted.
+        </p>
+      </div>
+
+      <Card className="max-w-md mx-auto" data-testid="card-login">
+        <CardHeader className="text-center pb-4">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+            <Lock className="h-6 w-6 text-primary" />
+          </div>
+          <CardTitle className="text-base">Admin Access Required</CardTitle>
+          <CardDescription>
+            Enter the administrator password to access data upload tools.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="admin-password" className="text-sm font-medium mb-1.5 block">
+                Password
+              </label>
+              <Input
+                id="admin-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter admin password"
+                autoFocus
+                data-testid="input-admin-password"
+              />
+              {error && (
+                <p className="text-sm text-destructive mt-1.5 flex items-center gap-1" data-testid="text-login-error">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {error}
+                </p>
+              )}
+            </div>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!password.trim() || isLoading}
+              data-testid="btn-login"
+            >
+              {isLoading ? "Verifying..." : "Sign In"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AdminDashboard() {
   const { toast } = useToast();
+  const { logout, getToken } = useAuth();
   const [uploadType, setUploadType] = useState<string>("departments");
   const [uploadYear, setUploadYear] = useState<string>("FY2026");
   const [csvData, setCsvData] = useState<string>("");
@@ -22,11 +90,23 @@ export default function Admin() {
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/upload", {
-        data: csvData,
-        type: uploadType,
-        year: uploadYear,
+      const token = getToken();
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          data: csvData,
+          type: uploadType,
+          year: uploadYear,
+        }),
       });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Upload failed");
+      }
       return res.json();
     },
     onSuccess: (data) => {
@@ -61,11 +141,29 @@ Building Permits & Fees,Fees,1200000,1150000`;
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1000px] mx-auto">
-      <div>
-        <h1 className="text-xl font-bold">Data Upload</h1>
-        <p className="text-sm text-muted-foreground">
-          Upload budget data for your municipality. CSV format accepted.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold">Data Upload</h1>
+          <p className="text-sm text-muted-foreground">
+            Upload budget data for your municipality. CSV format accepted.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="gap-1.5 py-1 text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-800">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Admin
+          </Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={logout}
+            className="text-muted-foreground"
+            data-testid="btn-logout"
+          >
+            <LogOut className="h-4 w-4 mr-1.5" />
+            Sign Out
+          </Button>
+        </div>
       </div>
 
       {/* Upload Form */}
@@ -207,4 +305,14 @@ Building Permits & Fees,Fees,1200000,1150000`;
       )}
     </div>
   );
+}
+
+export default function Admin() {
+  const { isAuthenticated } = useAuth();
+
+  if (!isAuthenticated) {
+    return <LoginGate />;
+  }
+
+  return <AdminDashboard />;
 }

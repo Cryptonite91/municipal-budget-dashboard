@@ -2,6 +2,17 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { seedDatabase } from "./seed";
+import crypto from "crypto";
+
+// Admin password — in production this would come from env vars
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "maplewood";
+
+// In-memory session tokens (simple approach for demo)
+const activeSessions = new Set<string>();
+
+function generateToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -9,6 +20,43 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Seed database with demo data
   seedDatabase();
+
+  // --- Auth routes ---
+  app.post("/api/auth/login", (req, res) => {
+    const { password } = req.body;
+    if (!password || password !== ADMIN_PASSWORD) {
+      return res.status(401).json({ error: "Invalid password" });
+    }
+    const token = generateToken();
+    activeSessions.add(token);
+    res.json({ token });
+  });
+
+  app.post("/api/auth/verify", (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace("Bearer ", "");
+    if (!token || !activeSessions.has(token)) {
+      return res.status(401).json({ authenticated: false });
+    }
+    res.json({ authenticated: true });
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace("Bearer ", "");
+    if (token) activeSessions.delete(token);
+    res.json({ success: true });
+  });
+
+  // Auth middleware helper
+  function requireAuth(req: any, res: any, next: any) {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace("Bearer ", "");
+    if (!token || !activeSessions.has(token)) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    next();
+  }
 
   // Municipality info
   app.get("/api/municipality", async (_req, res) => {
@@ -112,8 +160,8 @@ export async function registerRoutes(
     });
   });
 
-  // CSV upload endpoint (simulated - parses CSV text)
-  app.post("/api/upload", async (req, res) => {
+  // CSV upload endpoint (protected - requires admin auth)
+  app.post("/api/upload", requireAuth, async (req, res) => {
     try {
       const { data, type, year } = req.body;
       if (!data || !type || !year) {
