@@ -47,6 +47,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   runMigrations();
   seedDatabase();
 
+  // ── Health check (used by Railway and load balancers) ─────────────────────
+  app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
+
   // ── Auth ──────────────────────────────────────────────────────────────────
   app.post("/api/auth/login", resolveTenant, async (req, res) => {
     const { password } = req.body;

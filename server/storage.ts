@@ -11,7 +11,15 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and } from "drizzle-orm";
 
+import { mkdirSync } from "fs";
+import { dirname } from "path";
+
 const dbPath = process.env.DATABASE_PATH || "data.db";
+// Ensure the directory exists (important for Railway volume mounts like /data/data.db)
+const dbDir = dirname(dbPath);
+if (dbDir && dbDir !== ".") {
+  try { mkdirSync(dbDir, { recursive: true }); } catch {}
+}
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 
