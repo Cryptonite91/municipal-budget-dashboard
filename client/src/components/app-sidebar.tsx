@@ -73,7 +73,7 @@ export function AppSidebar() {
           </svg>
           <div className="min-w-0">
             <p className="text-sm font-semibold truncate leading-tight">
-              {muni?.name || "Municipal"} Budget
+              Municipal Budget
             </p>
             <p className="text-xs opacity-60 truncate">Transparency Dashboard</p>
           </div>
@@ -145,7 +145,7 @@ export function AppSidebar() {
         )}
         <a
           href="/onboarding"
-          className="flex items-center gap-1.5 text-xs text-primary/70 hover:text-primary transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-xs font-medium text-teal-400 hover:text-teal-300 transition-colors cursor-pointer"
           data-testid="nav-onboarding"
           onClick={(e) => { e.preventDefault(); window.location.hash = "/onboarding"; }}
         >
