@@ -4,16 +4,16 @@ import {
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
-export function seedDatabase() {
+export async function seedDatabase() {
   // Check if already seeded
-  const existing = db.select().from(municipalities).get();
-  if (existing) return;
+  const existing = await db.select().from(municipalities).limit(1);
+  if (existing.length > 0) return;
 
   const passwordHash = bcrypt.hashSync("maplewood", 10);
   const passwordHash2 = bcrypt.hashSync("riverdale", 10);
 
   // ── Tenant 1: Maplewood, VT ─────────────────────────────────────────────────
-  const maplewood = db.insert(municipalities).values({
+  const [maplewood] = await db.insert(municipalities).values({
     slug: "maplewood-vt",
     name: "Maplewood",
     state: "Vermont",
@@ -28,10 +28,10 @@ export function seedDatabase() {
     departmentsPublished: true,
     projectsPublished: true,
     onboardingComplete: true,
-  }).returning().get();
+  }).returning();
 
-  // ── Tenant 2: Riverdale, NH (second demo) ────────────────────────────────────
-  const riverdale = db.insert(municipalities).values({
+  // ── Tenant 2: Riverdale, NH ───────────────────────────────────────────────
+  const [riverdale] = await db.insert(municipalities).values({
     slug: "riverdale-nh",
     name: "Riverdale",
     state: "New Hampshire",
@@ -46,9 +46,9 @@ export function seedDatabase() {
     departmentsPublished: true,
     projectsPublished: false,
     onboardingComplete: true,
-  }).returning().get();
+  }).returning();
 
-  // ── Revenue: Maplewood FY2026 ──────────────────────────────────────────────
+  // ── Revenue: Maplewood FY2026 ─────────────────────────────────────────────
   const mapleRev26 = [
     { source: "Residential Property Tax", category: "Property Taxes", budgetedAmount: 18200000, collectedAmount: 17890000 },
     { source: "Commercial Property Tax", category: "Property Taxes", budgetedAmount: 6800000, collectedAmount: 6650000 },
@@ -80,10 +80,10 @@ export function seedDatabase() {
     { source: "Fines & Penalties", category: "Other", budgetedAmount: 170000, collectedAmount: 155000 },
   ];
 
-  for (const r of mapleRev26) db.insert(revenueSources).values({ ...r, municipalityId: maplewood.id, year: "FY2026" }).run();
-  for (const r of mapleRev25) db.insert(revenueSources).values({ ...r, municipalityId: maplewood.id, year: "FY2025" }).run();
+  for (const r of mapleRev26) await db.insert(revenueSources).values({ ...r, municipalityId: maplewood.id, year: "FY2026" });
+  for (const r of mapleRev25) await db.insert(revenueSources).values({ ...r, municipalityId: maplewood.id, year: "FY2025" });
 
-  // ── Departments: Maplewood FY2026 + FY2025 ─────────────────────────────────
+  // ── Departments: Maplewood FY2026 + FY2025 ───────────────────────────────
   const mapleDept26 = [
     { department: "Public Safety", category: "Police Department", budgetedAmount: 5200000, spentAmount: 4680000 },
     { department: "Public Safety", category: "Fire Department", budgetedAmount: 3800000, spentAmount: 3420000 },
@@ -139,10 +139,10 @@ export function seedDatabase() {
     { department: "Library", category: "Collections & Programs", budgetedAmount: 200000, spentAmount: 195000 },
   ];
 
-  for (const d of mapleDept26) db.insert(departmentBudgets).values({ ...d, municipalityId: maplewood.id, year: "FY2026" }).run();
-  for (const d of mapleDept25) db.insert(departmentBudgets).values({ ...d, municipalityId: maplewood.id, year: "FY2025" }).run();
+  for (const d of mapleDept26) await db.insert(departmentBudgets).values({ ...d, municipalityId: maplewood.id, year: "FY2026" });
+  for (const d of mapleDept25) await db.insert(departmentBudgets).values({ ...d, municipalityId: maplewood.id, year: "FY2025" });
 
-  // ── Projects: Maplewood ────────────────────────────────────────────────────
+  // ── Projects: Maplewood ───────────────────────────────────────────────────
   const mapleProjects = [
     { name: "Main Street Bridge Replacement", department: "Public Works", totalBudget: 4200000, spentToDate: 2940000, percentComplete: 68, startDate: "2025-03-15", expectedEnd: "2026-09-30", status: "on-track", description: "Replacement of the aging Main Street bridge over Otter Creek." },
     { name: "Community Center Renovation", department: "Parks & Recreation", totalBudget: 2800000, spentToDate: 840000, percentComplete: 30, startDate: "2025-09-01", expectedEnd: "2027-02-28", status: "on-track", description: "Full renovation including ADA upgrades, HVAC, and multipurpose room expansion." },
@@ -152,9 +152,9 @@ export function seedDatabase() {
     { name: "Public Safety Radio System", department: "Public Safety", totalBudget: 1500000, spentToDate: 1350000, percentComplete: 92, startDate: "2025-01-15", expectedEnd: "2026-05-15", status: "on-track", description: "Upgrade to digital P25 radio communications system." },
   ];
 
-  for (const p of mapleProjects) db.insert(capitalProjects).values({ ...p, municipalityId: maplewood.id }).run();
+  for (const p of mapleProjects) await db.insert(capitalProjects).values({ ...p, municipalityId: maplewood.id });
 
-  // ── Revenue: Riverdale FY2026 ──────────────────────────────────────────────
+  // ── Revenue: Riverdale FY2026 ─────────────────────────────────────────────
   const riverdaleRev26 = [
     { source: "Residential Property Tax", category: "Property Taxes", budgetedAmount: 7200000, collectedAmount: 7100000 },
     { source: "Commercial Property Tax", category: "Property Taxes", budgetedAmount: 2800000, collectedAmount: 2750000 },
@@ -166,7 +166,7 @@ export function seedDatabase() {
     { source: "Investment Income", category: "Other", budgetedAmount: 110000, collectedAmount: 128000 },
   ];
 
-  for (const r of riverdaleRev26) db.insert(revenueSources).values({ ...r, municipalityId: riverdale.id, year: "FY2026" }).run();
+  for (const r of riverdaleRev26) await db.insert(revenueSources).values({ ...r, municipalityId: riverdale.id, year: "FY2026" });
 
   const riverdaleDept26 = [
     { department: "Public Safety", category: "Police", budgetedAmount: 2100000, spentAmount: 1950000 },
@@ -179,5 +179,7 @@ export function seedDatabase() {
     { department: "Parks & Recreation", category: "Parks", budgetedAmount: 420000, spentAmount: 380000 },
   ];
 
-  for (const d of riverdaleDept26) db.insert(departmentBudgets).values({ ...d, municipalityId: riverdale.id, year: "FY2026" }).run();
+  for (const d of riverdaleDept26) await db.insert(departmentBudgets).values({ ...d, municipalityId: riverdale.id, year: "FY2026" });
+
+  console.log("[seed] Demo data seeded for Maplewood, VT and Riverdale, NH");
 }

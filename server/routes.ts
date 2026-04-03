@@ -44,8 +44,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
-  runMigrations();
-  seedDatabase();
+  await runMigrations();
+  await seedDatabase();
 
   // ── Health check (used by Railway and load balancers) ─────────────────────
   app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
