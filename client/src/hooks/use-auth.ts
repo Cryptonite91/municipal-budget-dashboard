@@ -1,12 +1,13 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
 import React from "react";
+import { API_BASE } from "@/lib/api-base";
 
 interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  login: (password: string) => Promise<boolean>;
-  logout: () => void;
+  login: (password: string, tenantSlug: string) => Promise<boolean>;
+  logout: (tenantSlug: string) => void;
   getToken: () => string | null;
 }
 
@@ -20,11 +21,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const login = useCallback(async (password: string): Promise<boolean> => {
+  const login = useCallback(async (password: string, tenantSlug: string): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(`${API_BASE}/api/auth/login?tenant=${tenantSlug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
@@ -39,21 +40,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(true);
       setIsLoading(false);
       return true;
-    } catch (err: any) {
+    } catch {
       setError("Login failed. Please try again.");
       setIsLoading(false);
       return false;
     }
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback((tenantSlug: string) => {
     if (sessionToken) {
-      fetch("/api/auth/logout", {
+      fetch(`${API_BASE}/api/auth/logout?tenant=${tenantSlug}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       }).catch(() => {});
     }
     sessionToken = null;
@@ -72,8 +70,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
   return ctx;
 }

@@ -4,6 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCapitalProjects, formatCurrency } from "@/hooks/use-budget-data";
+import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { color: string; bgColor: string; icon: React.ReactNode; label: string }> = {
@@ -147,6 +148,7 @@ export default function Projects() {
           );
         })}
       </div>
+      <CitizenEngagement section="projects" />
     </div>
   );
 }

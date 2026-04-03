@@ -6,6 +6,7 @@ import {
   HardHat,
   Upload,
   HelpCircle,
+  Plus,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -20,30 +21,38 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { useQuery } from "@tanstack/react-query";
-import type { Municipality } from "@shared/schema";
-
-const citizenItems = [
-  { title: "Overview", url: "/", icon: LayoutDashboard },
-  { title: "Revenue Sources", url: "/revenue", icon: Wallet },
-  { title: "Spending", url: "/spending", icon: PieChart },
-  { title: "Compare Years", url: "/comparison", icon: GitCompareArrows },
-  { title: "Capital Projects", url: "/projects", icon: HardHat },
-];
-
-const adminItems = [
-  { title: "Data Upload", url: "/admin", icon: Upload },
-];
-
-const supportItems = [
-  { title: "Help & Glossary", url: "/help", icon: HelpCircle },
-];
+import { useMunicipality } from "@/hooks/use-budget-data";
+import { useTenantSlug } from "@/hooks/use-tenant";
 
 export function AppSidebar() {
   const [location] = useLocation();
-  const { data: muni } = useQuery<Municipality>({
-    queryKey: ["/api/municipality"],
-  });
+  const { data: muni } = useMunicipality();
+  const slug = useTenantSlug();
+
+  // Sidebar links use hash routing — tenant stays in the real URL search param
+  // wouter Link href sets the hash portion only, tenant stays in window.location.search
+  const tHref = (path: string) => path; // links are hash-only; tenant persists in URL
+
+  // Active check: compare hash path 
+  const isActive = (path: string) => {
+    return location === path;
+  };
+
+  const citizenItems = [
+    { title: "Overview", path: "/", icon: LayoutDashboard },
+    { title: "Revenue Sources", path: "/revenue", icon: Wallet },
+    { title: "Spending", path: "/spending", icon: PieChart },
+    { title: "Compare Years", path: "/comparison", icon: GitCompareArrows },
+    { title: "Capital Projects", path: "/projects", icon: HardHat },
+  ];
+
+  const adminItems = [
+    { title: "Data Upload", path: "/admin", icon: Upload },
+  ];
+
+  const supportItems = [
+    { title: "Help & Glossary", path: "/help", icon: HelpCircle },
+  ];
 
   return (
     <Sidebar>
@@ -70,6 +79,7 @@ export function AppSidebar() {
           </div>
         </div>
       </SidebarHeader>
+
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Citizen View</SidebarGroupLabel>
@@ -77,8 +87,8 @@ export function AppSidebar() {
             <SidebarMenu>
               {citizenItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
+                  <SidebarMenuButton asChild isActive={isActive(item.path)}>
+                    <Link href={tHref(item.path)} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </Link>
@@ -88,14 +98,15 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel>Administration</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {adminItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
+                  <SidebarMenuButton asChild isActive={isActive(item.path)}>
+                    <Link href={tHref(item.path)} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </Link>
@@ -105,14 +116,15 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel>Support</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {supportItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
+                  <SidebarMenuButton asChild isActive={isActive(item.path)}>
+                    <Link href={tHref(item.path)} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </Link>
@@ -123,13 +135,23 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4 pt-2">
+
+      <SidebarFooter className="p-4 pt-2 space-y-3">
         {muni && (
           <div className="text-xs opacity-50 space-y-0.5">
             <p>{muni.fiscalYear} · Pop. {muni.population.toLocaleString()}</p>
             <p>Updated {new Date(muni.lastUpdated).toLocaleDateString()}</p>
           </div>
         )}
+        <a
+          href="/onboarding"
+          className="flex items-center gap-1.5 text-xs text-primary/70 hover:text-primary transition-colors cursor-pointer"
+          data-testid="nav-onboarding"
+          onClick={(e) => { e.preventDefault(); window.location.hash = "/onboarding"; }}
+        >
+          <Plus className="h-3 w-3" />
+          Add your municipality
+        </a>
       </SidebarFooter>
     </Sidebar>
   );

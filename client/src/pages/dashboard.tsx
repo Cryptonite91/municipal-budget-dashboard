@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSummary, useYears, useMunicipality, formatCurrency, formatPercent } from "@/hooks/use-budget-data";
+import { CitizenEngagement } from "@/components/citizen-engagement";
 import {
   DollarSign,
   TrendingUp,
@@ -268,7 +269,7 @@ export default function Dashboard() {
 
       {/* Top 3 Spending Categories */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {summary.departments.slice(0, 3).map((dept, i) => {
+        {summary.departments.slice(0, 3).map((dept: any, i: number) => {
           const pct = ((dept.budgeted / summary.totalBudget) * 100).toFixed(1);
           return (
             <Card key={dept.name} data-testid={`card-top-dept-${i}`}>
@@ -290,6 +291,7 @@ export default function Dashboard() {
 
       {/* Dollar Breakdown */}
       <DollarBreakdown data={summary.departments} municipalityName={summary.municipalityName} />
+      <CitizenEngagement section="overview" />
     </div>
   );
 }

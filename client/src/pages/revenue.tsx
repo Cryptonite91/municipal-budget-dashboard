@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRevenue, useYears, formatCurrency } from "@/hooks/use-budget-data";
+import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
 
@@ -214,6 +215,7 @@ export default function Revenue() {
             );
           })}
       </div>
+      <CitizenEngagement section="revenue" />
     </div>
   );
 }

@@ -1,68 +1,81 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Municipality, RevenueSource, DepartmentBudget, CapitalProject } from "@shared/schema";
+import { useTenantSlug } from "./use-tenant";
+import type { Municipality, DepartmentBudget, RevenueSource, CapitalProject, CitizenComment } from "@shared/schema";
+
+// Build a tenant-scoped query key
+export function tKey(path: string, slug: string): string[] {
+  return [`${path}?tenant=${slug}`];
+}
 
 export function useMunicipality() {
-  return useQuery<Municipality>({ queryKey: ["/api/municipality"] });
-}
-
-export function useYears() {
-  return useQuery<string[]>({ queryKey: ["/api/years"] });
-}
-
-export function useRevenue(year: string) {
-  return useQuery<RevenueSource[]>({
-    queryKey: ["/api/revenue", year],
-    enabled: !!year,
+  const slug = useTenantSlug();
+  return useQuery<Omit<Municipality, "adminPasswordHash">>({
+    queryKey: tKey("/api/municipality", slug),
   });
 }
 
-export function useDepartments(year: string) {
-  return useQuery<DepartmentBudget[]>({
-    queryKey: ["/api/departments", year],
-    enabled: !!year,
-  });
-}
+// Alias for backwards compat
+export const useYears = useAvailableYears;
 
-export function useCapitalProjects() {
-  return useQuery<CapitalProject[]>({ queryKey: ["/api/projects"] });
-}
-
-export interface SummaryData {
-  totalBudget: number;
-  totalSpent: number;
-  totalRevenueBudgeted: number;
-  totalRevenueCollected: number;
-  yoyChange: number;
-  percentSpent: number;
-  budgetReserve: number;
-  costPerResident: number;
-  revenueEfficiency: number;
-  topDepartments: string[];
-  departments: { name: string; budgeted: number; spent: number }[];
-  population: number;
-  municipalityName: string;
+export function useAvailableYears() {
+  const slug = useTenantSlug();
+  return useQuery<string[]>({ queryKey: tKey("/api/years", slug) });
 }
 
 export function useSummary(year: string) {
-  return useQuery<SummaryData>({
-    queryKey: ["/api/summary", year],
+  const slug = useTenantSlug();
+  return useQuery<any>({
+    queryKey: tKey(`/api/summary/${year}`, slug),
     enabled: !!year,
   });
 }
 
-export function formatCurrency(val: number, compact = false): string {
-  if (compact) {
-    if (val >= 1000000) return `$${(val / 1000000).toFixed(1)}M`;
-    if (val >= 1000) return `$${(val / 1000).toFixed(0)}K`;
-  }
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(val);
+export function useRevenueSources(year: string) {
+  const slug = useTenantSlug();
+  return useQuery<RevenueSource[]>({
+    queryKey: tKey(`/api/revenue/${year}`, slug),
+    enabled: !!year,
+  });
 }
 
-export function formatPercent(val: number): string {
-  return `${val >= 0 ? "+" : ""}${val.toFixed(1)}%`;
+// Alias used by revenue.tsx
+export const useRevenue = useRevenueSources;
+
+export function useDepartmentBudgets(year: string) {
+  const slug = useTenantSlug();
+  return useQuery<DepartmentBudget[]>({
+    queryKey: tKey(`/api/departments/${year}`, slug),
+    enabled: !!year,
+  });
+}
+
+// Alias used by spending.tsx
+export const useDepartments = useDepartmentBudgets;
+
+export function useAllDepartmentBudgets() {
+  const slug = useTenantSlug();
+  return useQuery<DepartmentBudget[]>({ queryKey: tKey("/api/departments", slug) });
+}
+
+export function useCapitalProjects() {
+  const slug = useTenantSlug();
+  return useQuery<CapitalProject[]>({ queryKey: tKey("/api/projects", slug) });
+}
+
+export function usePublicComments() {
+  const slug = useTenantSlug();
+  return useQuery<CitizenComment[]>({ queryKey: tKey("/api/comments", slug) });
+}
+
+export function formatCurrency(n: number, long = false): string {
+  if (!long) {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${n.toFixed(0)}`;
+  }
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+}
+
+export function formatPercent(n: number): string {
+  return `${n.toFixed(1)}%`;
 }

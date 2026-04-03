@@ -2,9 +2,10 @@ import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Municipality configuration
-export const municipality = sqliteTable("municipality", {
+// ─── Municipalities (one row per tenant) ─────────────────────────────────────
+export const municipalities = sqliteTable("municipalities", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  slug: text("slug").notNull().unique(),          // URL identifier: "maplewood-vt"
   name: text("name").notNull(),
   state: text("state").notNull(),
   population: integer("population").notNull(),
@@ -13,18 +14,26 @@ export const municipality = sqliteTable("municipality", {
   contactPhone: text("contact_phone"),
   website: text("website"),
   lastUpdated: text("last_updated").notNull(),
+  adminPasswordHash: text("admin_password_hash").notNull(), // bcrypt hash
+  // Publish flags — controls what citizens can see
+  revenuePublished: integer("revenue_published", { mode: "boolean" }).notNull().default(false),
+  departmentsPublished: integer("departments_published", { mode: "boolean" }).notNull().default(false),
+  projectsPublished: integer("projects_published", { mode: "boolean" }).notNull().default(false),
+  // Onboarding
+  onboardingComplete: integer("onboarding_complete", { mode: "boolean" }).notNull().default(false),
 });
 
-export const insertMunicipalitySchema = createInsertSchema(municipality).omit({ id: true });
+export const insertMunicipalitySchema = createInsertSchema(municipalities).omit({ id: true });
 export type InsertMunicipality = z.infer<typeof insertMunicipalitySchema>;
-export type Municipality = typeof municipality.$inferSelect;
+export type Municipality = typeof municipalities.$inferSelect;
 
-// Revenue sources
+// ─── Revenue sources ──────────────────────────────────────────────────────────
 export const revenueSources = sqliteTable("revenue_sources", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
   year: text("year").notNull(),
   source: text("source").notNull(),
-  category: text("category").notNull(), // Property Taxes, State Aid, Fees, Grants, Other
+  category: text("category").notNull(),
   budgetedAmount: real("budgeted_amount").notNull(),
   collectedAmount: real("collected_amount").notNull(),
 });
@@ -33,12 +42,13 @@ export const insertRevenueSourceSchema = createInsertSchema(revenueSources).omit
 export type InsertRevenueSource = z.infer<typeof insertRevenueSourceSchema>;
 export type RevenueSource = typeof revenueSources.$inferSelect;
 
-// Department budgets
+// ─── Department budgets ───────────────────────────────────────────────────────
 export const departmentBudgets = sqliteTable("department_budgets", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
   year: text("year").notNull(),
   department: text("department").notNull(),
-  category: text("category").notNull(), // sub-category within department
+  category: text("category").notNull(),
   budgetedAmount: real("budgeted_amount").notNull(),
   spentAmount: real("spent_amount").notNull(),
 });
@@ -47,9 +57,10 @@ export const insertDepartmentBudgetSchema = createInsertSchema(departmentBudgets
 export type InsertDepartmentBudget = z.infer<typeof insertDepartmentBudgetSchema>;
 export type DepartmentBudget = typeof departmentBudgets.$inferSelect;
 
-// Capital projects
+// ─── Capital projects ─────────────────────────────────────────────────────────
 export const capitalProjects = sqliteTable("capital_projects", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
   name: text("name").notNull(),
   department: text("department").notNull(),
   totalBudget: real("total_budget").notNull(),
@@ -65,9 +76,10 @@ export const insertCapitalProjectSchema = createInsertSchema(capitalProjects).om
 export type InsertCapitalProject = z.infer<typeof insertCapitalProjectSchema>;
 export type CapitalProject = typeof capitalProjects.$inferSelect;
 
-// Upload history
+// ─── Upload history ───────────────────────────────────────────────────────────
 export const uploadHistory = sqliteTable("upload_history", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
   filename: text("filename").notNull(),
   uploadedAt: text("uploaded_at").notNull(),
   recordCount: integer("record_count").notNull(),
@@ -78,3 +90,32 @@ export const uploadHistory = sqliteTable("upload_history", {
 export const insertUploadHistorySchema = createInsertSchema(uploadHistory).omit({ id: true });
 export type InsertUploadHistory = z.infer<typeof insertUploadHistorySchema>;
 export type UploadHistory = typeof uploadHistory.$inferSelect;
+
+// ─── Citizen comments ─────────────────────────────────────────────────────────
+export const citizenComments = sqliteTable("citizen_comments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
+  section: text("section").notNull(),   // "revenue" | "departments" | "projects" | "general"
+  name: text("name"),                    // optional
+  email: text("email"),                  // optional
+  message: text("message").notNull(),
+  submittedAt: text("submitted_at").notNull(),
+  approved: integer("approved", { mode: "boolean" }).notNull().default(false),
+});
+
+export const insertCitizenCommentSchema = createInsertSchema(citizenComments).omit({ id: true });
+export type InsertCitizenComment = z.infer<typeof insertCitizenCommentSchema>;
+export type CitizenComment = typeof citizenComments.$inferSelect;
+
+// ─── Email subscribers ────────────────────────────────────────────────────────
+export const emailSubscribers = sqliteTable("email_subscribers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
+  email: text("email").notNull(),
+  subscribedAt: text("subscribed_at").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+});
+
+export const insertEmailSubscriberSchema = createInsertSchema(emailSubscribers).omit({ id: true });
+export type InsertEmailSubscriber = z.infer<typeof insertEmailSubscriberSchema>;
+export type EmailSubscriber = typeof emailSubscribers.$inferSelect;

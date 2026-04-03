@@ -15,6 +15,7 @@ import Comparison from "@/pages/comparison";
 import Projects from "@/pages/projects";
 import Admin from "@/pages/admin";
 import Help from "@/pages/help";
+import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ function AppRouter() {
       <Route path="/projects" component={Projects} />
       <Route path="/admin" component={Admin} />
       <Route path="/help" component={Help} />
+      <Route path="/onboarding" component={Onboarding} />
       <Route component={NotFound} />
     </Switch>
   );

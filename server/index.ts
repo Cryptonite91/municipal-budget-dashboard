@@ -22,6 +22,20 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// CORS — allow the S3-hosted frontend to reach this API
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  // Allow Perplexity sites, localhost, and any custom frontend
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",

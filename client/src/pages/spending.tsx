@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useDepartments, useYears, useSummary, formatCurrency } from "@/hooks/use-budget-data";
+import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight, Shield, GraduationCap, Wrench, TreePine, Building2, Heart, BookOpen } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 
@@ -214,6 +215,7 @@ export default function Spending() {
           </div>
         </CardContent>
       </Card>
+      <CitizenEngagement section="spending" />
     </div>
   );
 }

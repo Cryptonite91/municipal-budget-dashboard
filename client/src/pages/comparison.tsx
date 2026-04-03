@@ -34,13 +34,13 @@ export default function Comparison() {
 
   // Build comparison data
   const allDepts = new Set([
-    ...currentSummary.departments.map(d => d.name),
-    ...priorSummary.departments.map(d => d.name),
+    ...currentSummary.departments.map((d: any) => d.name),
+    ...priorSummary.departments.map((d: any) => d.name),
   ]);
 
   const comparisonData = Array.from(allDepts).map(name => {
-    const curr = currentSummary.departments.find(d => d.name === name);
-    const prior = priorSummary.departments.find(d => d.name === name);
+    const curr = currentSummary.departments.find((d: any) => d.name === name);
+    const prior = priorSummary.departments.find((d: any) => d.name === name);
     const currBudget = curr?.budgeted || 0;
     const priorBudget = prior?.budgeted || 0;
     const change = currBudget - priorBudget;
