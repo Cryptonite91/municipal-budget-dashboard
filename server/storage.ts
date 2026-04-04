@@ -45,6 +45,12 @@ export interface IStorage {
   getUploadHistory(muniId: number): Promise<UploadHistory[]>;
   createUploadHistory(data: InsertUploadHistory): Promise<UploadHistory>;
   getAvailableYears(muniId: number): Promise<string[]>;
+  updateRevenueSource(id: number, muniId: number, data: Partial<InsertRevenueSource>): Promise<RevenueSource>;
+  deleteRevenueSource(id: number, muniId: number): Promise<void>;
+  updateDepartmentBudget(id: number, muniId: number, data: Partial<InsertDepartmentBudget>): Promise<DepartmentBudget>;
+  deleteDepartmentBudget(id: number, muniId: number): Promise<void>;
+  updateCapitalProject(id: number, muniId: number, data: Partial<InsertCapitalProject>): Promise<CapitalProject>;
+  deleteCapitalProject(id: number, muniId: number): Promise<void>;
   getComments(muniId: number, approved?: boolean): Promise<CitizenComment[]>;
   createComment(data: InsertCitizenComment): Promise<CitizenComment>;
   approveComment(id: number): Promise<void>;
@@ -155,6 +161,37 @@ export class DatabaseStorage implements IStorage {
     ]);
     const allYears = new Set([...deptYears.map(r => r.year), ...revYears.map(r => r.year)]);
     return Array.from(allYears).sort().reverse();
+  }
+
+  // ── Row-level edits ────────────────────────────────────────────────────────
+  async updateRevenueSource(id: number, muniId: number, data: Partial<InsertRevenueSource>): Promise<RevenueSource> {
+    await db.update(revenueSources).set(data).where(and(eq(revenueSources.id, id), eq(revenueSources.municipalityId, muniId)));
+    const rows = await db.select().from(revenueSources).where(eq(revenueSources.id, id));
+    return rows[0];
+  }
+
+  async deleteRevenueSource(id: number, muniId: number): Promise<void> {
+    await db.delete(revenueSources).where(and(eq(revenueSources.id, id), eq(revenueSources.municipalityId, muniId)));
+  }
+
+  async updateDepartmentBudget(id: number, muniId: number, data: Partial<InsertDepartmentBudget>): Promise<DepartmentBudget> {
+    await db.update(departmentBudgets).set(data).where(and(eq(departmentBudgets.id, id), eq(departmentBudgets.municipalityId, muniId)));
+    const rows = await db.select().from(departmentBudgets).where(eq(departmentBudgets.id, id));
+    return rows[0];
+  }
+
+  async deleteDepartmentBudget(id: number, muniId: number): Promise<void> {
+    await db.delete(departmentBudgets).where(and(eq(departmentBudgets.id, id), eq(departmentBudgets.municipalityId, muniId)));
+  }
+
+  async updateCapitalProject(id: number, muniId: number, data: Partial<InsertCapitalProject>): Promise<CapitalProject> {
+    await db.update(capitalProjects).set(data).where(and(eq(capitalProjects.id, id), eq(capitalProjects.municipalityId, muniId)));
+    const rows = await db.select().from(capitalProjects).where(eq(capitalProjects.id, id));
+    return rows[0];
+  }
+
+  async deleteCapitalProject(id: number, muniId: number): Promise<void> {
+    await db.delete(capitalProjects).where(and(eq(capitalProjects.id, id), eq(capitalProjects.municipalityId, muniId)));
   }
 
   // ── Comments ────────────────────────────────────────────────────────────────

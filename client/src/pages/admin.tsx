@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
+import { DataEditor } from "@/components/data-editor";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function authFetch(url: string, token: string | null, opts: RequestInit = {}) {
@@ -676,6 +677,9 @@ function AdminDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Data editor — inline view + edit */}
+      <DataEditor token={token} slug={slug} />
 
       {/* Upload wizard */}
       <UploadWizard token={token} slug={slug} />

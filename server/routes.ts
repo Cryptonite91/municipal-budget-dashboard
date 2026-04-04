@@ -184,6 +184,119 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(projects);
   });
 
+  // ── Row-level PATCH / DELETE for revenue, departments, projects ──────────
+  app.patch("/api/revenue/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const id = parseInt(req.params.id as string);
+    const { source, category, budgetedAmount, collectedAmount } = req.body;
+    const data: any = {};
+    if (source !== undefined) data.source = source;
+    if (category !== undefined) data.category = category;
+    if (budgetedAmount !== undefined) data.budgetedAmount = parseFloat(budgetedAmount);
+    if (collectedAmount !== undefined) data.collectedAmount = parseFloat(collectedAmount);
+    const updated = await storage.updateRevenueSource(id, muni.id, data);
+    res.json(updated);
+  });
+
+  app.delete("/api/revenue/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    await storage.deleteRevenueSource(parseInt(req.params.id as string), muni.id);
+    res.json({ success: true });
+  });
+
+  app.patch("/api/departments/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const id = parseInt(req.params.id as string);
+    const { department, category, budgetedAmount, spentAmount } = req.body;
+    const data: any = {};
+    if (department !== undefined) data.department = department;
+    if (category !== undefined) data.category = category;
+    if (budgetedAmount !== undefined) data.budgetedAmount = parseFloat(budgetedAmount);
+    if (spentAmount !== undefined) data.spentAmount = parseFloat(spentAmount);
+    const updated = await storage.updateDepartmentBudget(id, muni.id, data);
+    res.json(updated);
+  });
+
+  app.delete("/api/departments/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    await storage.deleteDepartmentBudget(parseInt(req.params.id as string), muni.id);
+    res.json({ success: true });
+  });
+
+  app.patch("/api/projects/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const id = parseInt(req.params.id as string);
+    const { name, department, totalBudget, spentToDate, percentComplete, startDate, expectedEnd, status, description } = req.body;
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (department !== undefined) data.department = department;
+    if (totalBudget !== undefined) data.totalBudget = parseFloat(totalBudget);
+    if (spentToDate !== undefined) data.spentToDate = parseFloat(spentToDate);
+    if (percentComplete !== undefined) data.percentComplete = parseInt(percentComplete);
+    if (startDate !== undefined) data.startDate = startDate;
+    if (expectedEnd !== undefined) data.expectedEnd = expectedEnd;
+    if (status !== undefined) data.status = status;
+    if (description !== undefined) data.description = description;
+    const updated = await storage.updateCapitalProject(id, muni.id, data);
+    res.json(updated);
+  });
+
+  app.delete("/api/projects/:id", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    await storage.deleteCapitalProject(parseInt(req.params.id as string), muni.id);
+    res.json({ success: true });
+  });
+
+  // ── Bulk commit (apply many row-level changes at once) ────────────────────
+  app.post("/api/bulk-edit", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { changes } = req.body;
+      if (!Array.isArray(changes)) return res.status(400).json({ error: "changes must be an array" });
+      const results: any[] = [];
+      for (const change of changes) {
+        const { type, id, action, data } = change;
+        if (action === "update") {
+          if (type === "revenue") {
+            const d: any = {};
+            if (data.source !== undefined) d.source = data.source;
+            if (data.category !== undefined) d.category = data.category;
+            if (data.budgetedAmount !== undefined) d.budgetedAmount = parseFloat(data.budgetedAmount);
+            if (data.collectedAmount !== undefined) d.collectedAmount = parseFloat(data.collectedAmount);
+            results.push(await storage.updateRevenueSource(id, muni.id, d));
+          } else if (type === "department") {
+            const d: any = {};
+            if (data.department !== undefined) d.department = data.department;
+            if (data.category !== undefined) d.category = data.category;
+            if (data.budgetedAmount !== undefined) d.budgetedAmount = parseFloat(data.budgetedAmount);
+            if (data.spentAmount !== undefined) d.spentAmount = parseFloat(data.spentAmount);
+            results.push(await storage.updateDepartmentBudget(id, muni.id, d));
+          } else if (type === "project") {
+            const d: any = {};
+            if (data.name !== undefined) d.name = data.name;
+            if (data.department !== undefined) d.department = data.department;
+            if (data.totalBudget !== undefined) d.totalBudget = parseFloat(data.totalBudget);
+            if (data.spentToDate !== undefined) d.spentToDate = parseFloat(data.spentToDate);
+            if (data.percentComplete !== undefined) d.percentComplete = parseInt(data.percentComplete);
+            if (data.startDate !== undefined) d.startDate = data.startDate;
+            if (data.expectedEnd !== undefined) d.expectedEnd = data.expectedEnd;
+            if (data.status !== undefined) d.status = data.status;
+            if (data.description !== undefined) d.description = data.description;
+            results.push(await storage.updateCapitalProject(id, muni.id, d));
+          }
+        } else if (action === "delete") {
+          if (type === "revenue") await storage.deleteRevenueSource(id, muni.id);
+          else if (type === "department") await storage.deleteDepartmentBudget(id, muni.id);
+          else if (type === "project") await storage.deleteCapitalProject(id, muni.id);
+          results.push({ deleted: id, type });
+        }
+      }
+      res.json({ success: true, applied: results.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Upload history ────────────────────────────────────────────────────────
   app.get("/api/uploads", resolveTenant, requireAuth, async (req, res) => {
     const muni = res.locals.muni as Municipality;
