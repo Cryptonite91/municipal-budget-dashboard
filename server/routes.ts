@@ -834,6 +834,189 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     };
   }
 
+
+  // ── AI Budget Chatbot ─────────────────────────────────────────────────────────
+  //
+  // POST /api/chat — unified chatbot endpoint for Import Budget Data.
+  // Accepts a conversation history + optional base64 PDF attachment.
+  // Returns one of three modes:
+  //   import_proposal  — structured rows matching the 5-column importer schema
+  //   needs_clarification — follow-up questions before proposing rows
+  //   answer           — plain-text answer to a general app question
+  //
+  app.post("/api/chat", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const apiKey = process.env.PERPLEXITY_API_KEY;
+      if (!apiKey) return res.status(503).json({ error: "AI not configured" });
+
+      const { messages = [], fileData, fileName, mimeType } = req.body as {
+        messages: Array<{ role: "user" | "assistant"; content: string }>;
+        fileData?: string;   // base64
+        fileName?: string;
+        mimeType?: string;
+      };
+
+      // ── Extract PDF text if a file is attached ──────────────────────────────
+      let pdfContext = "";
+      if (fileData && mimeType === "application/pdf") {
+        try {
+          const buf = Buffer.from(fileData, "base64");
+          const parsed = await pdfParse(buf);
+          const rawText = (parsed.text || "").slice(0, 24000).trim();
+          console.log(`[chat] pdf-parse: ${parsed.numpages} pages, ${rawText.length} chars`);
+          if (rawText) {
+            const norm = normalizePdfText(rawText);
+            pdfContext = [
+              norm.documentTitle ? `Document: ${norm.documentTitle}` : `File: ${fileName || "attached PDF"}`,
+              norm.fiscalYears.length ? `Fiscal years detected: ${norm.fiscalYears.join(", ")}` : "",
+              norm.departmentHeaders.length ? `Departments/funds: ${norm.departmentHeaders.slice(0, 12).join(", ")}` : "",
+              norm.candidateCategories.length ? `Line items: ${norm.candidateCategories.slice(0, 16).join(", ")}` : "",
+              `\n--- RAW TEXT EXCERPT (first 4000 chars, column headers stripped) ---\n${norm.excerpt.slice(0, 4000)}`,
+            ].filter(Boolean).join("\n");
+          }
+        } catch (pdfErr: any) {
+          console.error("[chat] pdf-parse error:", pdfErr?.message);
+          pdfContext = `(PDF attached: ${fileName || "file"} — text extraction failed, may be scanned)`;
+        }
+      } else if (fileData && mimeType && !mimeType.includes("pdf")) {
+        pdfContext = `(Non-PDF file attached: ${fileName || "file"}, type: ${mimeType} — text not extracted)`;
+      }
+
+      // ── System prompt ────────────────────────────────────────────────────────
+      const SYSTEM = `You are a budget import assistant for a municipal budget transparency dashboard.
+You help administrators analyze budget documents and prepare data for import.
+
+The importer accepts exactly these 5 columns (no others, no renaming):
+  Department | Category | Budgeted Amount | Spent Amount | Year
+
+Rules:
+- Department = high-level department or function (e.g. "Administration", "Public Safety")
+- Category = subcategory or line item (e.g. "Salaries", "Property Taxes")
+- Budgeted Amount = proposed/current-year budget as a plain number (no $ or commas)
+- Spent Amount = actual/spent amount if available, else null
+- Year = fiscal year string (e.g. "FY2026")
+
+When the admin uploads a budget document, analyze it and either:
+1. Return proposed import rows (if you have enough data), OR
+2. Ask ONE concise clarifying question first (e.g. "Import summary rows or detailed line items?")
+
+If no document is attached, answer general app questions concisely (1-4 sentences).
+
+RESPONSE FORMAT — you MUST return valid JSON only, no markdown, no prose:
+
+For import proposal:
+{"mode":"import_proposal","confidence":0.0,"questions":[],"rows":[{"Department":"","Category":"","Budgeted Amount":null,"Spent Amount":null,"Year":""}],"notes":[]}
+
+For clarification needed:
+{"mode":"needs_clarification","confidence":0.0,"questions":["..."],"rows":[],"notes":[]}
+
+For general answers (no document):
+{"mode":"answer","text":"...","rows":[],"notes":[]}
+
+Do NOT search the web. Use only the text provided.
+Keep rows collapsed to department level when the source has 20+ line items (unless admin asked for detail).
+Never auto-import. Return rows for admin review only.`;
+
+      // ── Build message list for API ───────────────────────────────────────────
+      // The last user message might need the PDF context appended
+      const apiMessages: Array<{ role: string; content: string }> = [];
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (i === messages.length - 1 && m.role === "user" && pdfContext) {
+          apiMessages.push({
+            role: "user",
+            content: m.content
+              ? `${m.content}\n\nATTACHED DOCUMENT CONTEXT:\n${pdfContext}`
+              : `Please analyze this budget document and propose import rows.\n\nATTACHED DOCUMENT CONTEXT:\n${pdfContext}`,
+          });
+        } else {
+          apiMessages.push({ role: m.role, content: m.content });
+        }
+      }
+
+      // If only a file was provided with no messages, seed the first message
+      if (apiMessages.length === 0 && pdfContext) {
+        apiMessages.push({
+          role: "user",
+          content: `Please analyze this budget document and propose import rows.\n\nATTACHED DOCUMENT CONTEXT:\n${pdfContext}`,
+        });
+      }
+
+      // ── Call Perplexity ──────────────────────────────────────────────────────
+      const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "sonar-pro",
+          system: SYSTEM,
+          messages: apiMessages,
+          max_tokens: 2048,
+          temperature: 0,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errBody = await aiRes.text();
+        console.error("[chat] Perplexity error:", aiRes.status, errBody);
+        return res.status(502).json({ error: "AI service error" });
+      }
+
+      const aiJson = await aiRes.json();
+      const rawContent: string = aiJson.choices?.[0]?.message?.content ?? "";
+
+      // ── Parse JSON response ──────────────────────────────────────────────────
+      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        // AI returned plain text — wrap it as an answer
+        return res.json({ mode: "answer", text: rawContent.trim(), rows: [], notes: [] });
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        return res.json({ mode: "answer", text: rawContent.trim(), rows: [], notes: [] });
+      }
+
+      // ── Validate + coerce ────────────────────────────────────────────────────
+      const mode = ["import_proposal", "needs_clarification", "answer"].includes(parsed.mode)
+        ? parsed.mode : "answer";
+
+      if (mode === "import_proposal") {
+        if (!Array.isArray(parsed.rows)) parsed.rows = [];
+        // Coerce each row to the exact 5-column schema
+        parsed.rows = parsed.rows.map((r: any) => ({
+          "Department": String(r["Department"] ?? r.department ?? ""),
+          "Category": String(r["Category"] ?? r.category ?? ""),
+          "Budgeted Amount": r["Budgeted Amount"] != null ? Number(String(r["Budgeted Amount"]).replace(/[^\d.-]/g, "")) || null : null,
+          "Spent Amount": r["Spent Amount"] != null ? Number(String(r["Spent Amount"]).replace(/[^\d.-]/g, "")) || null : null,
+          "Year": String(r["Year"] ?? r.year ?? ""),
+        }));
+        parsed.confidence = typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : 0.7;
+        parsed.questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+        parsed.notes = Array.isArray(parsed.notes) ? parsed.notes : [];
+      } else if (mode === "needs_clarification") {
+        parsed.rows = [];
+        parsed.questions = Array.isArray(parsed.questions) ? parsed.questions.slice(0, 2) : [];
+        parsed.notes = Array.isArray(parsed.notes) ? parsed.notes : [];
+      } else {
+        // answer mode
+        parsed.text = parsed.text ?? rawContent.trim();
+        parsed.rows = [];
+        parsed.notes = Array.isArray(parsed.notes) ? parsed.notes : [];
+      }
+
+      parsed.mode = mode;
+      return res.json(parsed);
+    } catch (e: any) {
+      console.error("[chat] error:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/documents/analyze", resolveTenant, requireAuth, async (req, res) => {
     try {
       const { data, mimeType } = req.body;

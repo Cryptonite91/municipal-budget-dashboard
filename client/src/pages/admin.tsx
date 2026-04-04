@@ -201,115 +201,52 @@ function DirectoryListingCard({
   );
 }
 
-// ─── AI types (shared with Upload Wizard) ────────────────────────────────────
-interface AIProposal {
-  // Legacy compat fields (UploadWizard state reads these)
-  docType: string;
-  destination: string;
-  metadata: { year?: string | null; fiscalYear?: string | null; description?: string | null };
-  missingFields: string[];
-  // Enhanced fields from the richer analyzer
-  document_type: string;
-  fiscal_year: string | null;
-  fund_name: string | null;
-  report_section: string | null;
-  extraction_quality: "high" | "medium" | "low";
-  summary_tables: Array<{ label: string; totals: Record<string, string | number> }>;
-  detail_rows: Array<{ account_code: string; account_title: string; budget: number | null; actual: number | null; change: number | null; pct_change: number | null; flag: string }>;
-  candidate_categories: string[];
-  suggested_upload_type: string;
-  suggested_destination: string;
-  missing_fields: string[];
-  admin_questions: string[];
-  confidence: number;
-  rationale: string;
+// ─── Import row schema ────────────────────────────────────────────────────────
+interface ImportRow {
+  Department: string;
+  Category: string;
+  "Budgeted Amount": number | null;
+  "Spent Amount": number | null;
+  Year: string;
 }
 
-const DESTINATION_LABELS: Record<string, string> = {
-  revenue: "Revenue Sources",
-  departments: "Department Spending",
-  projects: "Capital Projects",
-  documents: "Document Library (file only)",
-};
-
-const DOC_TYPE_LABELS: Record<string, string> = {
-  // Enhanced analyzer types
-  "budget-summary": "Budget Summary",
-  "budget-detail": "Budget Detail (Line Items)",
-  "annual-report-support": "Annual Report Support File",
-  "financial-statement": "Financial Statement",
-  "capital-plan": "Capital Plan",
-  // Legacy types (kept for backward-compat)
-  "general-fund-budget": "General Fund Budget",
-  "enterprise-fund-budget": "Enterprise Fund Budget",
-  "capital-budget": "Capital Budget",
-  "revenue-report": "Revenue Report",
-  "audit-report": "Audit Report",
-  "meeting-minutes": "Meeting Minutes",
-  "other": "Other",
-};
-
-function ConfidenceBar({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-rose-500";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-[10px] text-muted-foreground w-8 text-right">{pct}%</span>
-    </div>
-  );
+// ─── Chat message types ───────────────────────────────────────────────────────
+interface ChatMsg {
+  role: "user" | "assistant";
+  content: string;
+  rows?: ImportRow[];
+  questions?: string[];
+  mode?: "import_proposal" | "needs_clarification" | "answer";
+  confidence?: number;
+  notes?: string[];
 }
 
-// ─── Upload wizard ────────────────────────────────────────────────────────────
-type WizardStep = "choose" | "ai-reviewing" | "ai-proposal" | "map" | "confirm";
-type UploadType = "departments" | "revenue" | "projects";
-type InputMode = "csv" | "pdf";
-
-const TYPE_LABELS: Record<UploadType, string> = {
-  departments: "Department Budgets",
-  revenue: "Revenue Sources",
-  projects: "Capital Projects",
-};
-
-const REQUIRED_COLS: Record<UploadType, { key: string; label: string; hints: string[] }[]> = {
-  departments: [
-    { key: "department", label: "Department", hints: ["department", "dept"] },
-    { key: "category", label: "Sub-Category", hints: ["category", "sub-category", "line item"] },
-    { key: "budgetedAmount", label: "Budgeted Amount", hints: ["budgeted amount", "budgeted", "budget"] },
-    { key: "spentAmount", label: "Spent / Actual", hints: ["spent amount", "spent", "actual", "expenditure"] },
-  ],
-  revenue: [
-    { key: "source", label: "Revenue Source", hints: ["source", "revenue source", "name"] },
-    { key: "category", label: "Category", hints: ["category", "type", "revenue type"] },
-    { key: "budgetedAmount", label: "Budgeted Amount", hints: ["budgeted amount", "budgeted", "budget"] },
-    { key: "collectedAmount", label: "Collected / Actual", hints: ["collected amount", "collected", "actual", "received"] },
-  ],
-  projects: [
-    { key: "name", label: "Project Name", hints: ["name", "project", "project name"] },
-    { key: "department", label: "Department", hints: ["department", "dept"] },
-    { key: "totalBudget", label: "Total Budget", hints: ["total budget", "budget"] },
-    { key: "spentToDate", label: "Spent to Date", hints: ["spent to date", "spent"] },
-    { key: "percentComplete", label: "% Complete", hints: ["percent complete", "% complete", "progress"] },
-    { key: "status", label: "Status", hints: ["status"] },
-  ],
-};
-
-const SAMPLE_CSV: Record<UploadType, string> = {
-  departments: `Department,Category,Budgeted Amount,Spent Amount\nPublic Safety,Police Department,5200000,4680000\nPublic Safety,Fire Department,3800000,3420000\nEducation,K-12 Schools,12500000,11250000`,
-  revenue: `Source,Category,Budgeted Amount,Collected Amount\nResidential Property Tax,Property Taxes,18200000,17890000\nEducation Fund Grant,State Aid,8400000,8400000\nBuilding Permits & Fees,Fees,1200000,1150000`,
-  projects: `Name,Department,Total Budget,Spent To Date,Percent Complete,Status\nMain Street Bridge,Public Works,4200000,2940000,68,on-track\nSolar Installation,Education,1800000,1260000,55,at-risk`,
-};
-
-function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
+// ─── Budget Chatbot ───────────────────────────────────────────────────────────
+function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const chatFileRef = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const [messages, setMessages] = useState<ChatMsg[]>([
+    {
+      role: "assistant",
+      content: "Upload a budget PDF to get proposed import rows, or ask me a question about the import workflow.",
+      mode: "answer",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [pendingFile, setPendingFile] = useState<{ name: string; base64: string; mimeType: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Proposed rows (editable) — set when AI returns import_proposal
+  const [proposedRows, setProposedRows] = useState<ImportRow[] | null>(null);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+
+  // CSV import state (feeds into existing handleFile → map → confirm flow)
   const fileRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
-
-  const [step, setStep] = useState<WizardStep>("choose");
-  const [inputMode, setInputMode] = useState<InputMode>("csv");
+  const [step, setStep] = useState<"choose" | "map" | "confirm">("choose");
   const [uploadType, setUploadType] = useState<UploadType>("departments");
   const [uploadYear, setUploadYear] = useState("FY2026");
   const [rawData, setRawData] = useState("");
@@ -319,83 +256,172 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showSample, setShowSample] = useState(false);
-  // AI review state
-  const [aiProposal, setAiProposal] = useState<AIProposal | null>(null);
-  const [aiReviewLog, setAiReviewLog] = useState<string | null>(null);
-  const [editedDocType, setEditedDocType] = useState("");
-  const [editedDestination, setEditedDestination] = useState<UploadType>("departments");
-  const [editedYear, setEditedYear] = useState("FY2026");
+  const [inputMode, setInputMode] = useState<"chat" | "csv">("chat");
 
-  // ── PDF + AI handler ────────────────────────────────────────────────────
-  const handlePdf = useCallback(async (file: File) => {
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      toast({ title: "PDF files only", description: "Please drop a .pdf file.", variant: "destructive" });
+  const scrollToBottom = () => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+  // ── File attach handler ──────────────────────────────────────────────────────
+  const handleChatFile = useCallback(async (file: File) => {
+    const ALLOWED = ["application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel", "text/plain"];
+    if (!ALLOWED.includes(file.type) && !file.name.endsWith(".pdf") && !file.name.endsWith(".csv")) {
+      toast({ title: "Unsupported file", description: "Attach a PDF, CSV, or Excel file.", variant: "destructive" });
       return;
     }
-    setStep("ai-reviewing");
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const dataUrl = e.target?.result as string;
-        // Strip data URI prefix to get raw base64
-        const base64 = dataUrl.split(",")[1];
-        const res = await authFetch(`/api/documents/analyze?tenant=${slug}`, token, {
-          method: "POST",
-          body: JSON.stringify({ data: base64, mimeType: "application/pdf" }),
-        });
-        const json = await res.json();
-        if (json.skip || !json.proposal) {
-          toast({ title: "AI review skipped", description: "Proceed with manual entry.", variant: "default" });
-          setStep("choose");
-          setInputMode("csv");
-          return;
-        }
-        const p: AIProposal = json.proposal;
-        setAiProposal(p);
-        setEditedDocType(p.docType);
-        // Map destination → uploadType ("documents" falls back to "departments")
-        const dest = (["revenue", "departments", "projects"] as UploadType[]).includes(p.destination as UploadType)
-          ? (p.destination as UploadType)
-          : "departments";
-        setEditedDestination(dest);
-        const yr = p.metadata?.year || p.metadata?.fiscalYear || uploadYear;
-        setEditedYear((["FY2027","FY2026","FY2025","FY2024"].includes(yr) ? yr : uploadYear));
-        setStep("ai-proposal");
-      } catch {
-        toast({ title: "AI review failed", description: "Proceed with manual entry.", variant: "destructive" });
-        setStep("choose");
-        setInputMode("csv");
-      }
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    setPendingFile({ name: file.name, base64, mimeType: file.type || "application/pdf" });
+    toast({ title: "File ready", description: `${file.name} attached — send a message or just hit Send to analyze.` });
+  }, [toast]);
+
+  // ── Send to /api/chat ────────────────────────────────────────────────────────
+  const sendMessage = async (overrideContent?: string) => {
+    const userText = overrideContent ?? input.trim();
+    if (!userText && !pendingFile) return;
+
+    const userMsg: ChatMsg = {
+      role: "user",
+      content: userText || (pendingFile ? `Analyze this file: ${pendingFile.name}` : ""),
     };
-    reader.readAsDataURL(file);
-  }, [slug, token, uploadYear, toast]);
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
+    setInput("");
+    setLoading(true);
+    scrollToBottom();
 
-  const handleAiProceed = () => {
-    if (!aiProposal) return;
-    setUploadType(editedDestination);
-    setUploadYear(editedYear);
-    setAiReviewLog(JSON.stringify({ proposal: aiProposal, decision: "approved", decidedAt: new Date().toISOString() }));
-    setAiProposal(null);
-    setStep("choose");
-    setInputMode("csv");
-  };
+    try {
+      // Build wire messages (exclude the intro system message from message history)
+      const wireMessages = nextMessages
+        .filter(m => !(m.role === "assistant" && m.mode === "answer" && nextMessages.indexOf(m) === 0))
+        .map(m => ({ role: m.role, content: m.content }));
 
-  const handleAiCancel = () => {
-    if (aiProposal) {
-      setAiReviewLog(JSON.stringify({ proposal: aiProposal, decision: "rejected", decidedAt: new Date().toISOString() }));
+      const body: Record<string, unknown> = { messages: wireMessages };
+      if (pendingFile) {
+        body.fileData = pendingFile.base64;
+        body.fileName = pendingFile.name;
+        body.mimeType = pendingFile.mimeType;
+      }
+
+      const res = await authFetch(`/api/chat?tenant=${slug}`, token, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("AI service unavailable");
+      const data = await res.json();
+
+      const assistantMsg: ChatMsg = {
+        role: "assistant",
+        mode: data.mode,
+        content: data.mode === "import_proposal"
+          ? `I found ${data.rows?.length ?? 0} rows to import (confidence: ${Math.round((data.confidence ?? 0) * 100)}%).${data.notes?.length ? " " + data.notes.join(" ") : ""}`
+          : data.mode === "needs_clarification"
+          ? (data.questions?.join(" ") || "I need a bit more information.")
+          : (data.text || "Done."),
+        rows: data.rows ?? [],
+        questions: data.questions ?? [],
+        confidence: data.confidence,
+        notes: data.notes ?? [],
+      };
+
+      setMessages(prev => [...prev, assistantMsg]);
+
+      if (data.mode === "import_proposal" && data.rows?.length > 0) {
+        setProposedRows(data.rows);
+      }
+
+      setPendingFile(null);
+      scrollToBottom();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+      setMessages(prev => [...prev, { role: "assistant", mode: "answer", content: "Something went wrong. Please try again." }]);
+    } finally {
+      setLoading(false);
     }
-    setAiProposal(null);
-    setStep("choose");
-    setInputMode("csv");
   };
 
-  // Auto-map columns by matching hints
+  // ── Edit a proposed row ──────────────────────────────────────────────────────
+  const updateRow = (idx: number, field: keyof ImportRow, value: string) => {
+    setProposedRows(rows => rows?.map((r, i) => i !== idx ? r : {
+      ...r,
+      [field]: (field === "Budgeted Amount" || field === "Spent Amount")
+        ? (value === "" ? null : Number(value) || null)
+        : value,
+    }) ?? null);
+  };
+
+  const addRow = () => setProposedRows(rows => [
+    ...(rows ?? []),
+    { Department: "", Category: "", "Budgeted Amount": null, "Spent Amount": null, Year: uploadYear },
+  ]);
+
+  const removeRow = (idx: number) => setProposedRows(rows => rows?.filter((_, i) => i !== idx) ?? null);
+
+  // ── Download proposed rows as CSV ────────────────────────────────────────────
+  const downloadCsv = () => {
+    if (!proposedRows?.length) return;
+    const header = "Department,Category,Budgeted Amount,Spent Amount,Year";
+    const body = proposedRows.map(r =>
+      [r.Department, r.Category, r["Budgeted Amount"] ?? "", r["Spent Amount"] ?? "", r.Year]
+        .map(v => `"${String(v).replace(/"/g, '""')}"`)
+        .join(",")
+    ).join("\n");
+    const blob = new Blob([header + "\n" + body], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "budget-import.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Import proposed rows directly via the existing /api/upload flow ───────────
+  const importRows = async () => {
+    if (!proposedRows?.length) return;
+    const header = "Department,Category,Budgeted Amount,Spent Amount,Year";
+    const body = proposedRows.map(r =>
+      [r.Department, r.Category, r["Budgeted Amount"] ?? "", r["Spent Amount"] ?? "", r.Year]
+        .map(v => `"${String(v).replace(/"/g, '""')}"`)
+        .join(",")
+    ).join("\n");
+    const csv = header + "\n" + body;
+
+    // Detect year from first row
+    const detectedYear = proposedRows[0]?.Year || uploadYear;
+    const validYear = ["FY2027","FY2026","FY2025","FY2024"].includes(detectedYear) ? detectedYear : uploadYear;
+    setUploadYear(validYear);
+    setUploadType("departments");
+    setRawData(csv);
+    setFileFormat("csv");
+
+    // Preview it
+    setIsPreviewing(true);
+    try {
+      const res = await authFetch(`/api/upload/preview?tenant=${slug}`, token, {
+        method: "POST",
+        body: JSON.stringify({ data: csv, format: "csv" }),
+      });
+      const p = await res.json();
+      setPreview(p);
+      // Auto-map: our CSV columns match exactly
+      setColumnMap({
+        department: "Department",
+        category: "Category",
+        budgetedAmount: "Budgeted Amount",
+        spentAmount: "Spent Amount",
+      });
+      setStep("map");
+      setInputMode("csv");
+    } catch {
+      toast({ title: "Could not preview rows", variant: "destructive" });
+    } finally { setIsPreviewing(false); }
+  };
+
+  // ── CSV import helpers (unchanged logic from previous UploadWizard) ───────────
   function autoMap(headers: string[]) {
     const map: Record<string, string> = {};
     for (const col of REQUIRED_COLS[uploadType]) {
-      const match = headers.find(h =>
-        col.hints.some(hint => h.toLowerCase() === hint.toLowerCase())
-      );
+      const match = headers.find(h => col.hints.some(hint => h.toLowerCase() === hint.toLowerCase()));
       if (match) map[col.key] = match;
     }
     return map;
@@ -406,11 +432,8 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
     setFileFormat(isXlsx ? "xlsx" : "csv");
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const data = isXlsx
-        ? (e.target?.result as string).split(",")[1] // strip data:...;base64,
-        : (e.target?.result as string);
+      const data = isXlsx ? (e.target?.result as string).split(",")[1] : (e.target?.result as string);
       setRawData(data);
-      // Auto-preview
       setIsPreviewing(true);
       try {
         const res = await authFetch(`/api/upload/preview?tenant=${slug}`, token, {
@@ -424,8 +447,7 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
       } catch { toast({ title: "Could not parse file", variant: "destructive" }); }
       finally { setIsPreviewing(false); }
     };
-    if (isXlsx) reader.readAsDataURL(file);
-    else reader.readAsText(file);
+    if (isXlsx) reader.readAsDataURL(file); else reader.readAsText(file);
   };
 
   const handlePastePreview = async () => {
@@ -449,14 +471,12 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
     try {
       const res = await authFetch(`/api/upload?tenant=${slug}`, token, {
         method: "POST",
-        body: JSON.stringify({ data: rawData, type: uploadType, year: uploadYear, format: fileFormat, columnMap, aiReviewLog }),
+        body: JSON.stringify({ data: rawData, type: uploadType, year: uploadYear, format: fileFormat, columnMap }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
       const d = await res.json();
       toast({ title: "Import successful", description: `${d.recordCount} records imported for ${uploadYear}.` });
-      setStep("choose");
-      setRawData(""); setPreview(null); setColumnMap({});
-      setAiReviewLog(null); setAiProposal(null);
+      setStep("choose"); setRawData(""); setPreview(null); setColumnMap({}); setProposedRows(null);
       qc.invalidateQueries({ queryKey: tKey("/api/uploads", slug) });
       qc.invalidateQueries({ queryKey: tKey("/api/departments", slug) });
       qc.invalidateQueries({ queryKey: tKey("/api/revenue", slug) });
@@ -466,361 +486,282 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
     } finally { setIsUploading(false); }
   };
 
+  const resetToChat = () => {
+    setStep("choose"); setInputMode("chat");
+    setRawData(""); setPreview(null); setColumnMap({});
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <Card data-testid="card-upload-wizard">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="text-base">Import Budget Data</CardTitle>
-            <CardDescription>Upload CSV/Excel to import data, or drop a PDF to get an AI-assisted pre-fill.</CardDescription>
+            <CardDescription>
+              Chat with the AI to analyze a budget document and get proposed import rows, or switch to CSV/Excel for manual entry.
+            </CardDescription>
           </div>
-          {/* Step indicators — only show for CSV flow */}
-          {(step === "choose" || step === "map" || step === "confirm") && (
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              {(["choose", "map", "confirm"] as WizardStep[]).map((s, i) => (
-                <span key={s} className="flex items-center gap-1">
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${step === s ? "bg-primary text-primary-foreground" : i < ["choose","map","confirm"].indexOf(step) ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"}`}>{i + 1}</span>
-                  {i < 2 && <span className="opacity-30">›</span>}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* Mode tabs */}
+          <div className="flex gap-1 p-1 bg-muted rounded-lg shrink-0">
+            <button
+              onClick={() => { setInputMode("chat"); setStep("choose"); }}
+              className={`flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md font-medium transition-colors ${
+                inputMode === "chat" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-chat"
+            >
+              <Sparkles className="h-3 w-3" />AI Chat
+            </button>
+            <button
+              onClick={() => { setInputMode("csv"); setStep("choose"); }}
+              className={`flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md font-medium transition-colors ${
+                inputMode === "csv" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-csv"
+            >
+              <FileSpreadsheet className="h-3 w-3" />CSV / Excel
+            </button>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-5">
 
-        {/* Step 1: Choose file — tabbed CSV / PDF */}
-        {step === "choose" && (
-          <>
-            {/* Input mode tabs */}
-            <div className="flex gap-1 p-1 bg-muted rounded-lg">
-              <button
-                onClick={() => setInputMode("csv")}
-                className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
-                  inputMode === "csv" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid="tab-csv"
-              >
-                CSV / Excel
-              </button>
-              <button
-                onClick={() => setInputMode("pdf")}
-                className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                  inputMode === "pdf" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid="tab-pdf"
-              >
-                <Sparkles className="h-3 w-3" />
-                PDF + AI
-              </button>
+      <CardContent className="space-y-4">
+
+        {/* ── AI CHAT TAB ─────────────────────────────────────────────────────── */}
+        {inputMode === "chat" && step === "choose" && (
+          <div className="space-y-3">
+            {/* Message thread */}
+            <div className="min-h-[200px] max-h-[360px] overflow-y-auto space-y-3 pr-1" data-testid="chat-thread">
+              {messages.map((m, i) => (
+                <div key={i} className={`flex gap-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {m.role === "assistant" && (
+                    <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                  )}
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-foreground"
+                  }`}>
+                    <p>{m.content}</p>
+                    {m.mode === "needs_clarification" && m.questions && m.questions.length > 0 && (
+                      <ul className="mt-1.5 space-y-1">
+                        {m.questions.map((q, qi) => (
+                          <li key={qi} className="flex items-start gap-1">
+                            <span className="text-amber-500 mt-px">•</span>
+                            <button
+                              className="text-left underline underline-offset-2 text-amber-700 dark:text-amber-300 hover:no-underline"
+                              onClick={() => sendMessage(q)}
+                            >{q}</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="flex gap-2 justify-start">
+                  <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
+                  </div>
+                  <div className="bg-muted rounded-xl px-3 py-2 text-xs text-muted-foreground animate-pulse">Analyzing…</div>
+                </div>
+              )}
+              <div ref={bottomRef} />
             </div>
 
-            {/* CSV Tab */}
-            {inputMode === "csv" && (
-              <>
-                {/* AI-approved banner */}
-                {aiReviewLog && JSON.parse(aiReviewLog).decision === "approved" && (
-                  <div className="flex items-center gap-2 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    AI proposal applied — type set to <strong className="mx-0.5">{TYPE_LABELS[uploadType]}</strong> for <strong className="mx-0.5">{uploadYear}</strong>. Now upload or paste your CSV.
-                  </div>
-                )}
+            {/* Pending file badge */}
+            {pendingFile && (
+              <div className="flex items-center gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2 text-xs">
+                <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span className="flex-1 truncate font-medium">{pendingFile.name}</span>
+                <button onClick={() => setPendingFile(null)} className="text-muted-foreground hover:text-foreground">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
 
-                {/* Type + Year row */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
-                    <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Data Type</label>
-                    <div className="flex gap-2">
-                      {(["departments", "revenue", "projects"] as UploadType[]).map(t => (
-                        <button
-                          key={t}
-                          onClick={() => setUploadType(t)}
-                          className={`flex-1 text-xs py-2 px-2 rounded-md border font-medium transition-colors ${uploadType === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-input"}`}
-                          data-testid={`btn-type-${t}`}
-                        >
-                          {TYPE_LABELS[t]}
-                        </button>
+            {/* Input row */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => chatFileRef.current?.click()}
+                className="p-2 rounded-lg border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+                title="Attach PDF or CSV"
+                data-testid="btn-attach-file"
+              >
+                <Upload className="h-4 w-4" />
+              </button>
+              <input
+                ref={chatFileRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.csv,.xlsx,.xls"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleChatFile(f); e.target.value = ""; }}
+              />
+              <input
+                className="flex-1 h-9 rounded-lg border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Ask a question or attach a budget PDF…"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !loading) { e.preventDefault(); sendMessage(); }}}
+                data-testid="chat-input"
+              />
+              <Button
+                size="sm"
+                onClick={() => sendMessage()}
+                disabled={loading || (!input.trim() && !pendingFile)}
+                className="shrink-0"
+                data-testid="btn-chat-send"
+              >
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Proposed rows table */}
+            {proposedRows && proposedRows.length > 0 && (
+              <div className="space-y-2 pt-1 border-t">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold">Proposed Import Rows ({proposedRows.length})</p>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={downloadCsv} data-testid="btn-download-csv">
+                      <FileSpreadsheet className="h-3 w-3" />CSV
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={addRow} data-testid="btn-add-row">
+                      <Upload className="h-3 w-3" />Add row
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs gap-1" onClick={importRows} disabled={isPreviewing} data-testid="btn-import-rows">
+                      {isPreviewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                      Import
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border text-xs">
+                  <table className="w-full">
+                    <thead className="bg-muted">
+                      <tr>
+                        {["Department","Category","Budgeted Amount","Spent Amount","Year"].map(h => (
+                          <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                        ))}
+                        <th className="px-2 py-1.5 w-6" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {proposedRows.map((row, i) => (
+                        <tr key={i} className="border-t hover:bg-muted/30">
+                          {(["Department","Category","Budgeted Amount","Spent Amount","Year"] as (keyof ImportRow)[]).map(field => (
+                            <td key={field} className="px-1 py-1">
+                              <input
+                                className="w-full bg-transparent px-1.5 py-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
+                                value={row[field] ?? ""}
+                                onChange={e => updateRow(i, field, e.target.value)}
+                                placeholder={field === "Spent Amount" ? "optional" : ""}
+                                data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
+                              />
+                            </td>
+                          ))}
+                          <td className="px-1 py-1 text-center">
+                            <button onClick={() => removeRow(i)} className="text-muted-foreground hover:text-destructive">
+                              <X className="h-3 w-3" />
+                            </button>
+                          </td>
+                        </tr>
                       ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Fiscal Year</label>
-                    <select
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      value={uploadYear}
-                      onChange={e => setUploadYear(e.target.value)}
-                      data-testid="select-upload-year"
-                    >
-                      {["FY2027","FY2026","FY2025","FY2024"].map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
-
-                {/* Drag-drop zone */}
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
-                  onClick={() => fileRef.current?.click()}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-                  data-testid="drop-zone"
-                >
-                  <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-                  <FileSpreadsheet className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                  <p className="text-sm font-medium">Drop a file here or click to browse</p>
-                  <p className="text-xs text-muted-foreground mt-1">Supports .csv, .xlsx, and .xls</p>
-                  {isPreviewing && <p className="text-xs text-primary mt-2 animate-pulse">Parsing file…</p>}
-                </div>
-
-                <div className="relative flex items-center gap-2">
-                  <div className="flex-1 h-px bg-border" />
-                  <span className="text-xs text-muted-foreground">or paste CSV text</span>
-                  <div className="flex-1 h-px bg-border" />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Paste CSV</label>
-                    <button
-                      className="text-xs text-primary underline-offset-2 hover:underline"
-                      onClick={() => setShowSample(!showSample)}
-                    >
-                      {showSample ? "Hide" : "Show"} sample format
-                    </button>
-                  </div>
-                  {showSample && (
-                    <pre className="text-xs bg-muted rounded p-2 overflow-x-auto text-muted-foreground">
-                      {SAMPLE_CSV[uploadType]}
-                    </pre>
-                  )}
-                  <textarea
-                    className="w-full font-mono text-xs rounded-md border border-input bg-background p-2 min-h-[120px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
-                    placeholder={SAMPLE_CSV[uploadType]}
-                    value={rawData}
-                    onChange={e => setRawData(e.target.value)}
-                    data-testid="textarea-csv"
-                  />
-                  <Button onClick={handlePastePreview} disabled={!rawData.trim() || isPreviewing} size="sm" variant="outline" className="w-full" data-testid="btn-preview">
-                    <Table className="h-3.5 w-3.5 mr-1.5" />
-                    Preview & Map Columns
-                    <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-                  </Button>
-                </div>
-              </>
+                <p className="text-[10px] text-muted-foreground">Edit rows directly, then click Import to continue to column mapping.</p>
+              </div>
             )}
-
-            {/* PDF Tab */}
-            {inputMode === "pdf" && (
-              <>
-                {/* Already-reviewed banner */}
-                {aiReviewLog && JSON.parse(aiReviewLog).decision === "approved" && (
-                  <div className="flex items-center gap-2 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    AI proposal already applied. Switch to CSV/Excel tab to complete the import.
-                  </div>
-                )}
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-10 text-center hover:border-primary/50 transition-colors cursor-pointer"
-                  onClick={() => pdfRef.current?.click()}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handlePdf(f); }}
-                  data-testid="drop-zone-pdf"
-                >
-                  <input ref={pdfRef} type="file" accept=".pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handlePdf(f); }} />
-                  <Sparkles className="h-8 w-8 mx-auto mb-2 text-primary/50" />
-                  <p className="text-sm font-medium">Drop a PDF budget document here</p>
-                  <p className="text-xs text-muted-foreground mt-1">AI will analyze it and suggest type, year, and destination</p>
-                </div>
-                <p className="text-xs text-muted-foreground text-center">
-                  After reviewing the AI proposal, you’ll return here to upload the matching CSV/Excel data.
-                </p>
-              </>
-            )}
-          </>
-        )}
-
-        {/* AI Reviewing step */}
-        {step === "ai-reviewing" && (
-          <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">Analyzing document…</p>
-            <p className="text-xs text-muted-foreground">Reading PDF and consulting AI—this takes a few seconds.</p>
           </div>
         )}
 
-        {/* AI Proposal step */}
-        {step === "ai-proposal" && aiProposal && (
-          <div className="space-y-4">
-            {/* Header + extraction quality badge */}
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <p className="text-sm font-semibold">AI Proposal</p>
-              {aiProposal.extraction_quality && (
-                <span className={`ml-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${
-                  aiProposal.extraction_quality === "high" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                  : aiProposal.extraction_quality === "medium" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                  : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                }`}>
-                  {aiProposal.extraction_quality} extraction
-                </span>
-              )}
-              <span className="ml-auto text-xs text-muted-foreground">Review and edit before proceeding</span>
-            </div>
-
-            {/* Confidence + data stats row */}
-            <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Confidence</span>
-                <div className="flex gap-3">
-                  {aiProposal.summary_tables?.length > 0 && (
-                    <span>{aiProposal.summary_tables.length} summary table{aiProposal.summary_tables.length !== 1 ? "s" : ""}</span>
-                  )}
-                  {aiProposal.detail_rows?.length > 0 && (
-                    <span>{aiProposal.detail_rows.length} detail row{aiProposal.detail_rows.length !== 1 ? "s" : ""}</span>
-                  )}
+        {/* ── CSV / Excel TAB ──────────────────────────────────────────────────── */}
+        {inputMode === "csv" && step === "choose" && (
+          <>
+            {/* Type + Year row */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Data Type</label>
+                <div className="flex gap-2">
+                  {(["departments", "revenue", "projects"] as UploadType[]).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setUploadType(t)}
+                      className={`flex-1 text-xs py-2 px-2 rounded-md border font-medium transition-colors ${uploadType === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-input"}`}
+                      data-testid={`btn-type-${t}`}
+                    >{TYPE_LABELS[t]}</button>
+                  ))}
                 </div>
               </div>
-              <ConfidenceBar value={aiProposal.confidence} />
-            </div>
-
-            {/* Extracted metadata (read-only info strip) */}
-            {(aiProposal.fund_name || aiProposal.report_section || aiProposal.fiscal_year) && (
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {aiProposal.fiscal_year && (
-                  <div className="bg-muted rounded-md px-2 py-1.5">
-                    <p className="text-muted-foreground mb-0.5">Fiscal Year</p>
-                    <p className="font-medium">{aiProposal.fiscal_year}</p>
-                  </div>
-                )}
-                {aiProposal.fund_name && (
-                  <div className="bg-muted rounded-md px-2 py-1.5">
-                    <p className="text-muted-foreground mb-0.5">Fund</p>
-                    <p className="font-medium truncate">{aiProposal.fund_name}</p>
-                  </div>
-                )}
-                {aiProposal.report_section && (
-                  <div className="bg-muted rounded-md px-2 py-1.5">
-                    <p className="text-muted-foreground mb-0.5">Section</p>
-                    <p className="font-medium truncate">{aiProposal.report_section}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Editable fields */}
-            <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1">Document Type</label>
+                <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Fiscal Year</label>
                 <select
                   className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={editedDocType}
-                  onChange={e => setEditedDocType(e.target.value)}
-                  data-testid="select-doc-type"
-                >
-                  {Object.entries(DOC_TYPE_LABELS).map(([v, l]) => (
-                    <option key={v} value={v}>{l}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1">Import Destination</label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={editedDestination}
-                  onChange={e => setEditedDestination(e.target.value as UploadType)}
-                  data-testid="select-destination"
-                >
-                  {(["departments", "revenue", "projects"] as UploadType[]).map(v => (
-                    <option key={v} value={v}>{DESTINATION_LABELS[v]}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1">Fiscal Year</label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={editedYear}
-                  onChange={e => setEditedYear(e.target.value)}
-                  data-testid="select-ai-year"
+                  value={uploadYear}
+                  onChange={e => setUploadYear(e.target.value)}
+                  data-testid="select-upload-year"
                 >
                   {["FY2027","FY2026","FY2025","FY2024"].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
             </div>
 
-            {/* Admin questions — short targeted clarifiers */}
-            {aiProposal.admin_questions?.length > 0 && (
-              <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 space-y-1">
-                <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  AI needs clarification
-                </p>
-                <ul className="space-y-0.5">
-                  {aiProposal.admin_questions.map((q, i) => (
-                    <li key={i} className="text-xs text-amber-800 dark:text-amber-300 flex items-start gap-1">
-                      <span className="mt-px">•</span>
-                      <span>{q}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* Drag-drop zone */}
+            <div
+              className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+              onClick={() => fileRef.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+              data-testid="drop-zone"
+            >
+              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              <FileSpreadsheet className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+              <p className="text-sm font-medium">Drop a file here or click to browse</p>
+              <p className="text-xs text-muted-foreground mt-1">Supports .csv, .xlsx, and .xls</p>
+              {isPreviewing && <p className="text-xs text-primary mt-2 animate-pulse">Parsing file…</p>}
+            </div>
 
-            {/* Missing fields (separate from questions) */}
-            {(aiProposal.missing_fields?.length > 0 || aiProposal.missingFields?.length > 0) && !(aiProposal.admin_questions?.length > 0) && (
-              <div className="flex gap-2 items-start rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>Could not determine: <strong>{(aiProposal.missing_fields?.length ? aiProposal.missing_fields : aiProposal.missingFields).join(", ")}</strong>. Please review above.</span>
-              </div>
-            )}
+            <div className="relative flex items-center gap-2">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground">or paste CSV text</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
 
-            {/* Candidate categories */}
-            {aiProposal.candidate_categories?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Detected Categories / Accounts</p>
-                <div className="flex flex-wrap gap-1">
-                  {aiProposal.candidate_categories.slice(0, 12).map((cat, i) => (
-                    <span key={i} className="text-[10px] bg-muted rounded px-1.5 py-0.5 text-muted-foreground">{cat}</span>
-                  ))}
-                  {aiProposal.candidate_categories.length > 12 && (
-                    <span className="text-[10px] text-muted-foreground">+{aiProposal.candidate_categories.length - 12} more</span>
-                  )}
-                </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Paste CSV</label>
+                <button className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setShowSample(!showSample)}>
+                  {showSample ? "Hide" : "Show"} sample format
+                </button>
               </div>
-            )}
-
-            {/* Rationale */}
-            {aiProposal.rationale && (
-              <div className="flex gap-2 items-start rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{aiProposal.rationale}</span>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleAiCancel} className="flex-1 gap-1" data-testid="btn-ai-cancel">
-                <X className="h-3.5 w-3.5" />
-                Cancel
-              </Button>
-              <Button size="sm" onClick={handleAiProceed} className="flex-1 gap-1" data-testid="btn-ai-proceed">
-                <ArrowRight className="h-3.5 w-3.5" />
-                Proceed to Data Entry
+              {showSample && (
+                <pre className="text-xs bg-muted rounded p-2 overflow-x-auto text-muted-foreground">{SAMPLE_CSV[uploadType]}</pre>
+              )}
+              <textarea
+                className="w-full font-mono text-xs rounded-md border border-input bg-background p-2 min-h-[120px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
+                placeholder={SAMPLE_CSV[uploadType]}
+                value={rawData}
+                onChange={e => setRawData(e.target.value)}
+                data-testid="textarea-csv"
+              />
+              <Button onClick={handlePastePreview} disabled={!rawData.trim() || isPreviewing} size="sm" variant="outline" className="w-full" data-testid="btn-preview">
+                <Table className="h-3.5 w-3.5 mr-1.5" />Preview & Map Columns<ArrowRight className="h-3.5 w-3.5 ml-1.5" />
               </Button>
             </div>
-          </div>
+          </>
         )}
 
-        {/* Step 2: Column mapping */}
+        {/* ── COLUMN MAPPING step (shared by both tabs) ────────────────────────── */}
         {step === "map" && preview && (
           <>
             <div className="flex items-center justify-between mb-1">
               <p className="text-sm font-medium">{preview.totalRows} rows detected — map your columns below</p>
-              <button onClick={() => setStep("choose")} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back</button>
+              <button onClick={resetToChat} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back</button>
             </div>
-
-            {/* Column mapping UI */}
             <div className="space-y-2">
               {REQUIRED_COLS[uploadType].map(col => (
                 <div key={col.key} className="flex items-center gap-3">
@@ -841,40 +782,28 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
                 </div>
               ))}
             </div>
-
-            {/* Preview table */}
             <div className="overflow-x-auto rounded-md border mt-2">
               <table className="text-xs w-full">
                 <thead className="bg-muted">
-                  <tr>
-                    {preview.headers.map(h => (
-                      <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{preview.headers.map(h => <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {preview.rows.slice(0,3).map((row, i) => (
                     <tr key={i} className="border-t">
-                      {preview.headers.map(h => (
-                        <td key={h} className="px-2 py-1.5 truncate max-w-[120px]">{row[h]}</td>
-                      ))}
+                      {preview.headers.map(h => <td key={h} className="px-2 py-1.5 truncate max-w-[120px]">{row[h]}</td>)}
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {preview.totalRows > 3 && (
-                <p className="text-xs text-muted-foreground text-center py-1">+{preview.totalRows - 3} more rows</p>
-              )}
+              {preview.totalRows > 3 && <p className="text-xs text-muted-foreground text-center py-1">+{preview.totalRows - 3} more rows</p>}
             </div>
-
             <Button onClick={() => setStep("confirm")} className="w-full" data-testid="btn-confirm-mapping">
-              Looks good — Continue
-              <ArrowRight className="h-4 w-4 ml-1.5" />
+              Looks good — Continue<ArrowRight className="h-4 w-4 ml-1.5" />
             </Button>
           </>
         )}
 
-        {/* Step 3: Confirm + import */}
+        {/* ── CONFIRM + IMPORT step ────────────────────────────────────────────── */}
         {step === "confirm" && preview && (
           <div className="space-y-4">
             <button onClick={() => setStep("map")} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back to column mapping</button>
@@ -893,10 +822,12 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
             </Button>
           </div>
         )}
+
       </CardContent>
     </Card>
   );
 }
+
 
 // ─── Comment moderation ───────────────────────────────────────────────────────
 function CommentModeration({ token, slug }: { token: string | null; slug: string }) {
@@ -1144,7 +1075,7 @@ function AdminDashboard() {
       <DataEditor token={token} slug={slug} />
 
       {/* Upload wizard */}
-      <UploadWizard token={token} slug={slug} />
+      <BudgetChatbot token={token} slug={slug} />
 
       {/* Upload history */}
       <UploadHistoryPanel token={token} slug={slug} />
