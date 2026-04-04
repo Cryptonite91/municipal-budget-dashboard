@@ -256,7 +256,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showSample, setShowSample] = useState(false);
-  const [inputMode, setInputMode] = useState<"chat" | "csv">("chat");
+  const [inputMode, setInputMode] = useState<"chat" | "csv">("csv");
 
   const scrollToBottom = () => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
 
@@ -486,8 +486,9 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
     } finally { setIsUploading(false); }
   };
 
-  const resetToChat = () => {
-    setStep("choose"); setInputMode("chat");
+  const [lastTab, setLastTab] = useState<"chat" | "csv">("csv");
+  const resetToChoose = () => {
+    setStep("choose"); setInputMode(lastTab);
     setRawData(""); setPreview(null); setColumnMap({});
   };
 
@@ -505,7 +506,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
           {/* Mode tabs */}
           <div className="flex gap-1 p-1 bg-muted rounded-lg shrink-0">
             <button
-              onClick={() => { setInputMode("chat"); setStep("choose"); }}
+              onClick={() => { setLastTab("chat"); setInputMode("chat"); setStep("choose"); }}
               className={`flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md font-medium transition-colors ${
                 inputMode === "chat" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -514,7 +515,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
               <Sparkles className="h-3 w-3" />AI Chat
             </button>
             <button
-              onClick={() => { setInputMode("csv"); setStep("choose"); }}
+              onClick={() => { setLastTab("csv"); setInputMode("csv"); setStep("choose"); }}
               className={`flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md font-medium transition-colors ${
                 inputMode === "csv" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -760,7 +761,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
           <>
             <div className="flex items-center justify-between mb-1">
               <p className="text-sm font-medium">{preview.totalRows} rows detected — map your columns below</p>
-              <button onClick={resetToChat} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back</button>
+              <button onClick={resetToChoose} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back</button>
             </div>
             <div className="space-y-2">
               {REQUIRED_COLS[uploadType].map(col => (

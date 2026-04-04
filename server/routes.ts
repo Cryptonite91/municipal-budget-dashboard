@@ -943,6 +943,8 @@ Never auto-import. Return rows for admin review only.`;
       }
 
       // ── Call Perplexity ──────────────────────────────────────────────────────
+      // Use r1-1776: offline reasoning model — does NOT search the web.
+      // System prompt goes in the messages array (role: "system") per Perplexity API spec.
       const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
         method: "POST",
         headers: {
@@ -950,9 +952,8 @@ Never auto-import. Return rows for admin review only.`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "sonar-pro",
-          system: SYSTEM,
-          messages: apiMessages,
+          model: "r1-1776",
+          messages: [{ role: "system", content: SYSTEM }, ...apiMessages],
           max_tokens: 2048,
           temperature: 0,
         }),
