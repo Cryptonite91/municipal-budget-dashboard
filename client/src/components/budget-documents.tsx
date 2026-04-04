@@ -16,7 +16,8 @@ import type { BudgetDocument } from "@shared/schema";
 import {
   FileText, Upload, Trash2, Eye, EyeOff, Download, FilePlus,
   X, CheckCircle2, AlertTriangle, FileImage, FileSpreadsheet,
-  ChevronDown, ChevronUp, ExternalLink, Loader2,
+  ChevronDown, ChevronUp, ExternalLink, Loader2, Sparkles,
+  ThumbsUp, ThumbsDown, SkipForward, Info,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -56,15 +57,65 @@ function docUrl(muniId: number, filename: string, token?: string | null): string
   return token ? `${base}?token=${token}` : base;
 }
 
+// ─── AI Review types ───────────────────────────────────────────────────────────
+
+interface AIProposal {
+  docType: string;
+  destination: string;
+  metadata: { year?: string | null; fiscalYear?: string | null; description?: string | null };
+  confidence: number;
+  missingFields: string[];
+  rationale: string;
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  "general-fund-budget": "General Fund Budget",
+  "enterprise-fund-budget": "Enterprise Fund Budget",
+  "capital-budget": "Capital Budget",
+  "revenue-report": "Revenue Report",
+  "audit-report": "Audit Report",
+  "meeting-minutes": "Meeting Minutes",
+  "other": "Other",
+};
+
+const DESTINATION_LABELS: Record<string, string> = {
+  "revenue": "Revenue Sources",
+  "departments": "Department Spending",
+  "projects": "Capital Projects",
+  "documents": "Document Library",
+};
+
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-rose-500";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-[10px] text-muted-foreground w-8 text-right">{pct}%</span>
+    </div>
+  );
+}
+
 // ─── Upload Drop Zone ──────────────────────────────────────────────────────────
+
+type ReviewStep = "idle" | "reviewing" | "proposal" | "uploading";
 
 interface UploadState {
   file: File | null;
+  base64: string | null;
   displayName: string;
   description: string;
   year: string;
-  uploading: boolean;
-  progress: number; // 0-100
+  step: ReviewStep;
+  progress: number;
+  proposal: AIProposal | null;
+  // editable fields shown after proposal
+  editedDocType: string;
+  editedDestination: string;
+  editedYear: string;
+  editedDescription: string;
 }
 
 function UploadZone({
@@ -80,148 +131,361 @@ function UploadZone({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<UploadState>({
-    file: null, displayName: "", description: "", year: years[0] || "", uploading: false, progress: 0,
+    file: null, base64: null, displayName: "", description: "", year: years[0] || "",
+    step: "idle", progress: 0, proposal: null,
+    editedDocType: "", editedDestination: "documents",
+    editedYear: years[0] || "", editedDescription: "",
   });
   const [dragging, setDragging] = useState(false);
 
-  const acceptFile = (file: File) => {
-    setState(s => ({ ...s, file, displayName: file.name, year: years[0] || "" }));
-  };
+  const acceptFile = useCallback(async (file: File) => {
+    // Read base64 immediately so we have it ready
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    setState(s => ({
+      ...s,
+      file,
+      base64,
+      displayName: file.name,
+      year: years[0] || "",
+      step: "reviewing",
+      proposal: null,
+      editedYear: years[0] || "",
+      editedDescription: "",
+      editedDocType: "",
+      editedDestination: "documents",
+    }));
+
+    // Only analyze PDFs
+    if (file.type !== "application/pdf") {
+      setState(s => ({ ...s, step: "proposal", proposal: null }));
+      return;
+    }
+
+    // Call analyze endpoint
+    try {
+      const res = await authFetch(`/api/documents/analyze?tenant=${slug}`, token, {
+        method: "POST",
+        body: JSON.stringify({ data: base64, mimeType: file.type }),
+      });
+      const json = await res.json();
+      if (json.skip || !json.proposal) {
+        // Graceful degrade — go straight to manual entry
+        setState(s => ({ ...s, step: "proposal", proposal: null }));
+      } else {
+        const p: AIProposal = json.proposal;
+        setState(s => ({
+          ...s,
+          step: "proposal",
+          proposal: p,
+          editedDocType: p.docType,
+          editedDestination: p.destination,
+          editedYear: p.metadata?.year || years[0] || "",
+          editedDescription: p.metadata?.description || "",
+          displayName: s.displayName, // keep original filename
+        }));
+      }
+    } catch {
+      setState(s => ({ ...s, step: "proposal", proposal: null }));
+    }
+  }, [slug, token, years]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) acceptFile(file);
-  }, [years]);
+  }, [acceptFile]);
 
-  const handleUpload = async () => {
-    if (!state.file) return;
-    setState(s => ({ ...s, uploading: true, progress: 10 }));
+  const doUpload = async (decision: "approved" | "rejected" | "skipped") => {
+    if (!state.file || !state.base64) return;
+    setState(s => ({ ...s, step: "uploading", progress: 20 }));
     try {
-      // Read file as base64
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(",")[1]); // strip data: prefix
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(state.file!);
+      // Build auditLog
+      const aiReviewLog = JSON.stringify({
+        proposal: state.proposal,
+        decision,
+        decidedAt: new Date().toISOString(),
       });
-      setState(s => ({ ...s, progress: 50 }));
 
+      setState(s => ({ ...s, progress: 50 }));
       const res = await authFetch(`/api/documents?tenant=${slug}`, token, {
         method: "POST",
         body: JSON.stringify({
-          data: base64,
+          data: state.base64,
           originalName: state.displayName.trim() || state.file!.name,
           mimeType: state.file!.type || "application/octet-stream",
-          description: state.description.trim() || null,
-          year: state.year || null,
+          description: (decision === "approved" ? state.editedDescription : state.description).trim() || null,
+          year: (decision === "approved" ? state.editedYear : state.year) || null,
+          aiReviewLog,
         }),
       });
       setState(s => ({ ...s, progress: 90 }));
       if (!res.ok) throw new Error((await res.json()).error || "Upload failed");
 
       toast({ title: "Document uploaded", description: `${state.displayName || state.file!.name} was added successfully.` });
-      setState({ file: null, displayName: "", description: "", year: years[0] || "", uploading: false, progress: 0 });
+      setState(s => ({
+        ...s, file: null, base64: null, displayName: "", description: "",
+        year: years[0] || "", step: "idle", progress: 0, proposal: null,
+      }));
       onUploaded();
     } catch (e: any) {
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
-      setState(s => ({ ...s, uploading: false, progress: 0 }));
+      setState(s => ({ ...s, step: "proposal", progress: 0 }));
     }
   };
 
-  const clear = () => setState(s => ({ ...s, file: null, displayName: "", description: "" }));
+  const clear = () => setState(s => ({ ...s, file: null, base64: null, displayName: "", description: "", step: "idle", progress: 0, proposal: null }));
 
   const fieldCls = "w-full h-8 rounded-md border border-input bg-background px-2.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring placeholder:text-muted-foreground";
 
-  if (state.file) {
+  // ── Reviewing (loading) state ─────────────────────────────────────────────
+  if (state.step === "reviewing") {
     return (
-      <div className="border rounded-xl p-4 space-y-3 bg-muted/20">
-        {/* Selected file header */}
+      <div className="border rounded-xl p-5 bg-muted/20 space-y-3">
         <div className="flex items-center gap-2">
-          {fileIcon(state.file.type)}
-          <span className="text-xs font-medium flex-1 truncate">{state.file.name}</span>
-          <span className="text-[10px] text-muted-foreground shrink-0">{formatBytes(state.file.size)}</span>
-          {!state.uploading && (
-            <button onClick={clear} className="text-muted-foreground hover:text-foreground ml-1">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+          {fileIcon(state.file!.type)}
+          <span className="text-xs font-medium flex-1 truncate">{state.file!.name}</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{formatBytes(state.file!.size)}</span>
         </div>
-
-        {/* Upload progress bar */}
-        {state.uploading && (
-          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${state.progress}%` }}
-            />
+        <div className="flex items-center gap-2.5 py-3">
+          <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+          <div>
+            <p className="text-xs font-medium">AI is analyzing your document…</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Extracting text and classifying document type</p>
           </div>
-        )}
-
-        {/* Metadata fields */}
-        {!state.uploading && (
-          <div className="grid grid-cols-1 gap-2.5">
-            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
-              <label className="text-xs text-muted-foreground text-right">Display name</label>
-              <input
-                className={fieldCls}
-                value={state.displayName}
-                onChange={e => setState(s => ({ ...s, displayName: e.target.value }))}
-                placeholder="e.g. FY2025 General Fund Budget"
-                data-testid="input-doc-name"
-              />
-            </div>
-            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
-              <label className="text-xs text-muted-foreground text-right">Fiscal year</label>
-              <select
-                className={fieldCls}
-                value={state.year}
-                onChange={e => setState(s => ({ ...s, year: e.target.value }))}
-                data-testid="select-doc-year"
-              >
-                <option value="">No year tag</option>
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-[100px_1fr] items-start gap-2">
-              <label className="text-xs text-muted-foreground text-right pt-2">Description</label>
-              <textarea
-                className={`${fieldCls} h-14 resize-none pt-1.5`}
-                value={state.description}
-                onChange={e => setState(s => ({ ...s, description: e.target.value }))}
-                placeholder="Optional note for citizens"
-                data-testid="input-doc-desc"
-              />
-            </div>
-          </div>
-        )}
-
-        {!state.uploading && (
-          <div className="flex gap-2 pt-1">
-            <Button variant="outline" size="sm" onClick={clear} className="flex-1 text-xs h-8">
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleUpload} className="flex-1 text-xs h-8 gap-1.5" data-testid="btn-upload-doc">
-              <Upload className="h-3.5 w-3.5" />
-              Upload Document
-            </Button>
-          </div>
-        )}
-
-        {state.uploading && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Uploading… {state.progress}%
-          </div>
-        )}
+        </div>
       </div>
     );
   }
 
+  // ── Proposal step ─────────────────────────────────────────────────────────
+  if (state.step === "proposal") {
+    const p = state.proposal;
+    return (
+      <div className="border rounded-xl overflow-hidden bg-muted/20">
+        {/* File header */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b bg-background">
+          {fileIcon(state.file!.type)}
+          <span className="text-xs font-medium flex-1 truncate">{state.file!.name}</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{formatBytes(state.file!.size)}</span>
+          <button onClick={clear} className="text-muted-foreground hover:text-foreground ml-1">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* AI proposal panel or manual notice */}
+          {p ? (
+            <div className="space-y-3">
+              {/* Header */}
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                <p className="text-xs font-semibold">AI Recommendation</p>
+                <span className="ml-auto text-[10px] text-muted-foreground">Review and edit before uploading</span>
+              </div>
+
+              {/* Confidence */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Confidence</span>
+                </div>
+                <ConfidenceBar value={p.confidence} />
+              </div>
+
+              {/* Editable fields */}
+              <div className="grid grid-cols-1 gap-2.5 pt-1">
+                <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Document type</label>
+                  <select
+                    className={fieldCls}
+                    value={state.editedDocType}
+                    onChange={e => setState(s => ({ ...s, editedDocType: e.target.value }))}
+                    data-testid="select-ai-doctype"
+                  >
+                    {Object.entries(DOC_TYPE_LABELS).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Destination</label>
+                  <select
+                    className={fieldCls}
+                    value={state.editedDestination}
+                    onChange={e => setState(s => ({ ...s, editedDestination: e.target.value }))}
+                    data-testid="select-ai-destination"
+                  >
+                    {Object.entries(DESTINATION_LABELS).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Display name</label>
+                  <input
+                    className={fieldCls}
+                    value={state.displayName}
+                    onChange={e => setState(s => ({ ...s, displayName: e.target.value }))}
+                    placeholder="e.g. FY2025 General Fund Budget"
+                    data-testid="input-doc-name"
+                  />
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Fiscal year</label>
+                  <select
+                    className={fieldCls}
+                    value={state.editedYear}
+                    onChange={e => setState(s => ({ ...s, editedYear: e.target.value }))}
+                    data-testid="select-ai-year"
+                  >
+                    <option value="">No year tag</option>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-start gap-2">
+                  <label className="text-xs text-muted-foreground text-right pt-2">Description</label>
+                  <textarea
+                    className={`${fieldCls} h-14 resize-none pt-1.5`}
+                    value={state.editedDescription}
+                    onChange={e => setState(s => ({ ...s, editedDescription: e.target.value }))}
+                    placeholder="Optional note for citizens"
+                    data-testid="input-ai-desc"
+                  />
+                </div>
+              </div>
+
+              {/* Missing fields warning */}
+              {p.missingFields.length > 0 && (
+                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400">Could not determine: {p.missingFields.join(", ")}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Rationale */}
+              {p.rationale && (
+                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/40">
+                  <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">{p.rationale}</p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={clear}
+                  className="text-xs h-8 gap-1.5"
+                  data-testid="btn-ai-reject"
+                >
+                  <ThumbsDown className="h-3 w-3" />
+                  Reject
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => doUpload("skipped")}
+                  className="text-xs h-8 gap-1.5 flex-1"
+                  data-testid="btn-ai-skip"
+                >
+                  <SkipForward className="h-3 w-3" />
+                  Skip AI / Upload Manually
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => doUpload("approved")}
+                  className="text-xs h-8 gap-1.5 flex-1"
+                  data-testid="btn-ai-approve"
+                >
+                  <ThumbsUp className="h-3 w-3" />
+                  Approve & Upload
+                </Button>
+              </div>
+            </div>
+          ) : (
+            // Non-PDF or AI skipped — show standard metadata form
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">Fill in the document details below.</p>
+              <div className="grid grid-cols-1 gap-2.5">
+                <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Display name</label>
+                  <input
+                    className={fieldCls}
+                    value={state.displayName}
+                    onChange={e => setState(s => ({ ...s, displayName: e.target.value }))}
+                    placeholder="e.g. FY2025 General Fund Budget"
+                    data-testid="input-doc-name"
+                  />
+                </div>
+                <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                  <label className="text-xs text-muted-foreground text-right">Fiscal year</label>
+                  <select
+                    className={fieldCls}
+                    value={state.year}
+                    onChange={e => setState(s => ({ ...s, year: e.target.value }))}
+                    data-testid="select-doc-year"
+                  >
+                    <option value="">No year tag</option>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] items-start gap-2">
+                  <label className="text-xs text-muted-foreground text-right pt-2">Description</label>
+                  <textarea
+                    className={`${fieldCls} h-14 resize-none pt-1.5`}
+                    value={state.description}
+                    onChange={e => setState(s => ({ ...s, description: e.target.value }))}
+                    placeholder="Optional note for citizens"
+                    data-testid="input-doc-desc"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={clear} className="flex-1 text-xs h-8">Cancel</Button>
+                <Button size="sm" onClick={() => doUpload("skipped")} className="flex-1 text-xs h-8 gap-1.5" data-testid="btn-upload-doc">
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload Document
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Uploading state ───────────────────────────────────────────────────────
+  if (state.step === "uploading") {
+    return (
+      <div className="border rounded-xl p-4 space-y-3 bg-muted/20">
+        <div className="flex items-center gap-2">
+          {fileIcon(state.file!.type)}
+          <span className="text-xs font-medium flex-1 truncate">{state.file!.name}</span>
+        </div>
+        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-all duration-300"
+            style={{ width: `${state.progress}%` }}
+          />
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Uploading… {state.progress}%
+        </div>
+      </div>
+    );
+  }
+
+  // ── Drop zone (idle) ──────────────────────────────────────────────────────
   return (
     <div
       className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer
@@ -242,6 +506,9 @@ function UploadZone({
       <FilePlus className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
       <p className="text-sm font-medium text-muted-foreground">Drop a file or click to browse</p>
       <p className="text-xs text-muted-foreground/70 mt-1">PDF, Word, Excel, CSV, Images — up to 50 MB</p>
+      <p className="text-[10px] text-muted-foreground/50 mt-1 flex items-center justify-center gap-1">
+        <Sparkles className="h-3 w-3" /> PDFs analyzed by AI before upload
+      </p>
     </div>
   );
 }

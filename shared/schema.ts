@@ -134,6 +134,7 @@ export const budgetDocuments = sqliteTable("budget_documents", {
   uploadedAt: text("uploaded_at").notNull(),
   description: text("description"),          // optional admin note
   year: text("year"),                        // optional fiscal year tag
+  aiReviewLog: text("ai_review_log"),        // JSON: AI proposal + admin decision (audit log)
 });
 
 export const insertBudgetDocumentSchema = createInsertSchema(budgetDocuments).omit({ id: true });

@@ -108,6 +108,7 @@ const tables = [
 // ALTER TABLE migrations for columns added after initial schema
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE budget_documents ADD COLUMN ai_review_log TEXT`,
 ];
 
 export async function runMigrations() {

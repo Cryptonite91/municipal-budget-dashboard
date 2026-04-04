@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import type { Municipality } from "@shared/schema";
 import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "fs";
 import { join, extname } from "path";
+import pdfParse from "pdf-parse";
 
 // ─── Auth: per-tenant token sessions ─────────────────────────────────────────
 // Map: token → municipalityId
@@ -652,6 +653,113 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── Budget documents ───────────────────────────────────────────────────────────────
 
+  // ── AI document analysis ──────────────────────────────────────────────────
+  app.post("/api/documents/analyze", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const { data, mimeType } = req.body;
+      if (!data || !mimeType) return res.status(400).json({ error: "data and mimeType are required" });
+
+      // Only analyze PDFs — other types skip straight to manual entry
+      if (mimeType !== "application/pdf") {
+        return res.json({ skip: true });
+      }
+
+      const apiKey = process.env.PERPLEXITY_API_KEY;
+      if (!apiKey) {
+        // Gracefully degrade: no key → skip AI step
+        return res.json({ skip: true, reason: "PERPLEXITY_API_KEY not configured" });
+      }
+
+      // Decode PDF and extract text
+      const buf = Buffer.from(data, "base64");
+      let extractedText = "";
+      try {
+        const parsed = await pdfParse(buf);
+        extractedText = (parsed.text || "").slice(0, 3500).trim();
+      } catch {
+        // If pdf-parse fails, send what we have (empty string → AI will note missing info)
+        extractedText = "";
+      }
+
+      const prompt = `You are a municipal budget document classifier. Analyze the following extracted text from a PDF and return ONLY a valid JSON object — no markdown, no explanation.
+
+Allowed docTypes: general-fund-budget, enterprise-fund-budget, capital-budget, revenue-report, audit-report, meeting-minutes, other
+Allowed destinations: revenue (revenue sources data), departments (spending data), projects (capital projects), documents (file library only)
+
+Return this exact JSON shape:
+{
+  "docType": "<one of the allowed docTypes>",
+  "destination": "<one of the allowed destinations>",
+  "metadata": {
+    "year": "<fiscal year string if found, e.g. FY2025, else null>",
+    "fiscalYear": "<same as year or null>",
+    "description": "<one sentence description of the document>"
+  },
+  "confidence": <number 0.0 to 1.0>,
+  "missingFields": ["<list any fields that could not be determined>"],
+  "rationale": "<one or two sentence explanation of your classification>"
+}
+
+Document text:
+${extractedText || "(no text could be extracted)"}`;
+
+      const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "sonar",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 512,
+          temperature: 0,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errBody = await aiRes.text();
+        console.error("Perplexity API error:", aiRes.status, errBody);
+        return res.json({ skip: true, reason: "AI service unavailable" });
+      }
+
+      const aiJson = await aiRes.json();
+      const raw = aiJson.choices?.[0]?.message?.content ?? "";
+
+      // Extract JSON from the response (strip any markdown fences)
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return res.json({ skip: true, reason: "Could not parse AI response" });
+      }
+
+      let proposal: any;
+      try {
+        proposal = JSON.parse(jsonMatch[0]);
+      } catch {
+        return res.json({ skip: true, reason: "Invalid JSON from AI" });
+      }
+
+      // Validate required keys and coerce types
+      const ALLOWED_DOC_TYPES = ["general-fund-budget", "enterprise-fund-budget", "capital-budget", "revenue-report", "audit-report", "meeting-minutes", "other"];
+      const ALLOWED_DESTINATIONS = ["revenue", "departments", "projects", "documents"];
+
+      if (!ALLOWED_DOC_TYPES.includes(proposal.docType)) proposal.docType = "other";
+      if (!ALLOWED_DESTINATIONS.includes(proposal.destination)) proposal.destination = "documents";
+      if (typeof proposal.confidence !== "number" || proposal.confidence < 0 || proposal.confidence > 1) {
+        proposal.confidence = 0.5;
+      }
+      if (!Array.isArray(proposal.missingFields)) proposal.missingFields = [];
+      if (!proposal.rationale) proposal.rationale = "";
+      if (!proposal.metadata || typeof proposal.metadata !== "object") proposal.metadata = {};
+
+      return res.json({ proposal });
+    } catch (e: any) {
+      console.error("analyze route error:", e);
+      // Never hard-fail — just let the admin proceed manually
+      return res.json({ skip: true, reason: e.message });
+    }
+  });
+
   // Determine where to store uploaded files (Railway volume or local fallback)
   const UPLOADS_BASE = process.env.DATABASE_PATH
     ? join(process.env.DATABASE_PATH.replace(/\/[^/]+$/, ""), "uploads")
@@ -704,7 +812,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/documents", resolveTenant, requireAuth, async (req, res) => {
     try {
       const muni = res.locals.muni as Municipality;
-      const { data, originalName, mimeType, description, year } = req.body;
+      const { data, originalName, mimeType, description, year, aiReviewLog } = req.body;
       if (!data || !originalName || !mimeType)
         return res.status(400).json({ error: "data, originalName, and mimeType are required" });
 
@@ -733,6 +841,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         uploadedAt: new Date().toISOString(),
         description: description || null,
         year: year || null,
+        aiReviewLog: aiReviewLog ? String(aiReviewLog) : null,
       });
 
       res.json(doc);
