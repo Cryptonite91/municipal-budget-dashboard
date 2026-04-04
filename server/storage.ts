@@ -29,6 +29,7 @@ export interface IStorage {
   getMunicipalityBySlug(slug: string): Promise<Municipality | undefined>;
   getMunicipalityById(id: number): Promise<Municipality | undefined>;
   getAllMunicipalities(): Promise<Municipality[]>;
+  getListedMunicipalities(): Promise<Municipality[]>;
   createMunicipality(data: InsertMunicipality): Promise<Municipality>;
   updateMunicipality(id: number, data: Partial<InsertMunicipality>): Promise<Municipality>;
   getRevenueSources(muniId: number, year: string): Promise<RevenueSource[]>;
@@ -74,6 +75,10 @@ export class DatabaseStorage implements IStorage {
 
   async getAllMunicipalities(): Promise<Municipality[]> {
     return db.select().from(municipalities);
+  }
+
+  async getListedMunicipalities(): Promise<Municipality[]> {
+    return db.select().from(municipalities).where(eq(municipalities.listed, true));
   }
 
   async createMunicipality(data: InsertMunicipality): Promise<Municipality> {

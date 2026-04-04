@@ -13,7 +13,7 @@ import type { UploadHistory, CitizenComment, EmailSubscriber } from "@shared/sch
 import {
   Upload, FileText, CheckCircle2, AlertCircle, Lock, LogOut, ShieldCheck,
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
-  ChevronUp, FileSpreadsheet, Table, ArrowRight, Users,
+  ChevronUp, FileSpreadsheet, Table, ArrowRight, Users, Globe,
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
@@ -120,6 +120,82 @@ function PublishCard({
         {optimistic ? "Published" : "Draft"}
       </Button>
     </div>
+  );
+}
+
+// ─── Directory listing toggle ────────────────────────────────────────────────
+function DirectoryListingCard({
+  listed, token, slug,
+}: { listed: boolean; token: string | null; slug: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [optimistic, setOptimistic] = useState(listed);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const next = !optimistic;
+    setOptimistic(next);
+    setLoading(true);
+    try {
+      const res = await authFetch(`/api/listing?tenant=${slug}`, token, {
+        method: "POST",
+        body: JSON.stringify({ listed: next }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      qc.invalidateQueries({ queryKey: tKey("/api/municipality", slug) });
+      toast({
+        title: next ? "Municipality listed" : "Municipality unlisted",
+        description: next
+          ? "Your municipality now appears in the public directory."
+          : "Your municipality has been removed from the public directory.",
+      });
+    } catch {
+      setOptimistic(!next);
+      toast({ title: "Error", description: "Could not update listing status.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Globe className="h-4 w-4 text-primary" />
+          <CardTitle className="text-base">Directory Listing</CardTitle>
+        </div>
+        <CardDescription>
+          Control whether your municipality appears in the public explorer, where
+          citizens can discover and browse budget dashboards by state.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between gap-4 py-2">
+          <div>
+            <p className="text-sm font-medium">
+              {optimistic ? "Listed — visible to the public" : "Unlisted — hidden from directory"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {optimistic
+                ? "Citizens can find your municipality in the explorer and view your published budget data."
+                : "Visitors who navigate directly to your URL will see a placeholder until you enable listing."
+              }
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant={optimistic ? "default" : "outline"}
+            onClick={toggle}
+            disabled={loading}
+            className={`shrink-0 gap-1.5 ${optimistic ? "bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600" : ""}`}
+            data-testid="btn-listing-toggle"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            {optimistic ? "Listed" : "Unlisted"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -676,6 +752,11 @@ function AdminDashboard() {
             <PublishCard section="projects" label="Capital Projects" description="Infrastructure and major capital project tracker" published={muni.projectsPublished} token={token} slug={slug} />
           </CardContent>
         </Card>
+      )}
+
+      {/* Directory listing toggle */}
+      {muni && (
+        <DirectoryListingCard listed={muni.listed} token={token} slug={slug} />
       )}
 
       {/* Data editor — inline view + edit */}

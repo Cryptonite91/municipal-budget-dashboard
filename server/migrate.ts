@@ -31,7 +31,8 @@ const tables = [
     revenue_published INTEGER NOT NULL DEFAULT 0,
     departments_published INTEGER NOT NULL DEFAULT 0,
     projects_published INTEGER NOT NULL DEFAULT 0,
-    onboarding_complete INTEGER NOT NULL DEFAULT 0
+    onboarding_complete INTEGER NOT NULL DEFAULT 0,
+    listed INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS revenue_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,9 +93,28 @@ const tables = [
   )`,
 ];
 
+// ALTER TABLE migrations for columns added after initial schema
+const alterations = [
+  `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
+];
+
 export async function runMigrations() {
   for (const sql of tables) {
     await migrationClient.execute(sql);
   }
+  // Run alterations, ignoring "duplicate column" errors (idempotent)
+  for (const sql of alterations) {
+    try {
+      await migrationClient.execute(sql);
+    } catch (e: any) {
+      if (!e.message?.includes("duplicate column") && !e.message?.includes("already exists")) {
+        throw e;
+      }
+    }
+  }
+  // Seed demo munis as listed so they appear in directory
+  await migrationClient.execute(
+    `UPDATE municipalities SET listed = 1 WHERE slug IN ('maplewood-vt', 'riverdale-nh')`
+  );
   console.log("[migrate] Tables verified/created");
 }

@@ -21,6 +21,8 @@ export const municipalities = sqliteTable("municipalities", {
   projectsPublished: integer("projects_published", { mode: "boolean" }).notNull().default(false),
   // Onboarding
   onboardingComplete: integer("onboarding_complete", { mode: "boolean" }).notNull().default(false),
+  // Directory listing — when false, municipality is hidden from explorer AND public URL shows placeholder
+  listed: integer("listed", { mode: "boolean" }).notNull().default(false),
 });
 
 export const insertMunicipalitySchema = createInsertSchema(municipalities).omit({ id: true });

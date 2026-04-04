@@ -16,7 +16,9 @@ import Projects from "@/pages/projects";
 import Admin from "@/pages/admin";
 import Help from "@/pages/help";
 import Onboarding from "@/pages/onboarding";
+import Explorer from "@/pages/explorer";
 import NotFound from "@/pages/not-found";
+import { MunicipalityGate } from "@/components/municipality-gate";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
@@ -36,17 +38,26 @@ function ThemeToggle() {
   );
 }
 
+// Citizen pages are wrapped in MunicipalityGate so unlisted munis show a
+// friendly placeholder instead of live budget data.
+function GatedDashboard() { return <MunicipalityGate><Dashboard /></MunicipalityGate>; }
+function GatedRevenue()   { return <MunicipalityGate><Revenue /></MunicipalityGate>; }
+function GatedSpending()  { return <MunicipalityGate><Spending /></MunicipalityGate>; }
+function GatedComparison(){ return <MunicipalityGate><Comparison /></MunicipalityGate>; }
+function GatedProjects()  { return <MunicipalityGate><Projects /></MunicipalityGate>; }
+
 function AppRouter() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/revenue" component={Revenue} />
-      <Route path="/spending" component={Spending} />
-      <Route path="/comparison" component={Comparison} />
-      <Route path="/projects" component={Projects} />
+      <Route path="/" component={GatedDashboard} />
+      <Route path="/revenue" component={GatedRevenue} />
+      <Route path="/spending" component={GatedSpending} />
+      <Route path="/comparison" component={GatedComparison} />
+      <Route path="/projects" component={GatedProjects} />
       <Route path="/admin" component={Admin} />
       <Route path="/help" component={Help} />
       <Route path="/onboarding" component={Onboarding} />
+      <Route path="/explorer" component={Explorer} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -7,6 +7,7 @@ import {
   Upload,
   HelpCircle,
   Plus,
+  Globe,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -54,6 +55,10 @@ export function AppSidebar() {
     { title: "Help & Glossary", path: "/help", icon: HelpCircle },
   ];
 
+  const directoryItems = [
+    { title: "Explore Municipalities", path: "/explorer", icon: Globe },
+  ];
+
   return (
     <Sidebar>
       <SidebarHeader className="p-4 pb-2">
@@ -86,6 +91,24 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {citizenItems.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={isActive(item.path)}>
+                    <Link href={tHref(item.path)} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Directory</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {directoryItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={isActive(item.path)}>
                     <Link href={tHref(item.path)} data-testid={`nav-${item.title.toLowerCase().replace(/\s/g, "-")}`}>

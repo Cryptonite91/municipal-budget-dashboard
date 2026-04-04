@@ -109,6 +109,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ── Public municipality directory ─────────────────────────────────────────
+  app.get("/api/municipalities", async (req, res) => {
+    const listed = await storage.getListedMunicipalities();
+    const stateFilter = (req.query.state as string)?.toLowerCase();
+    const filtered = stateFilter
+      ? listed.filter(m => m.state.toLowerCase() === stateFilter)
+      : listed;
+    const safe = filtered.map(({ adminPasswordHash, ...m }) => m);
+    res.json(safe);
+  });
+
+  app.get("/api/municipalities/states", async (_req, res) => {
+    const listed = await storage.getListedMunicipalities();
+    const states = [...new Set(listed.map(m => m.state))].sort();
+    res.json(states);
+  });
+
   // ── Municipality info ─────────────────────────────────────────────────────
   app.get("/api/municipality", resolveTenant, (req, res) => {
     const muni = res.locals.muni as Municipality;
@@ -142,6 +159,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!field) return res.status(400).json({ error: "Invalid section" });
     await storage.updateMunicipality(muni.id, { [field]: published });
     res.json({ success: true, section, published });
+  });
+
+  // ── Directory listing toggle ──────────────────────────────────────────
+  app.post("/api/listing", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const { listed } = req.body;
+    if (typeof listed !== "boolean") return res.status(400).json({ error: "listed must be a boolean" });
+    await storage.updateMunicipality(muni.id, { listed });
+    res.json({ success: true, listed });
   });
 
   // ── Available years ───────────────────────────────────────────────────────
