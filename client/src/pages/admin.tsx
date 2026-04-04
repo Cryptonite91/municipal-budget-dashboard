@@ -424,9 +424,10 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
     ).join("\n");
     const csv = header + "\n" + body;
 
-    // Detect year from first row
+    // Detect year from first row — accept both "FY2025" and "2025" formats
     const detectedYear = proposedRows[0]?.Year || uploadYear;
-    const validYear = ["FY2027","FY2026","FY2025","FY2024"].includes(detectedYear) ? detectedYear : uploadYear;
+    const VALID_YEARS = ["FY2027","FY2026","FY2025","FY2024","FY2023","2027","2026","2025","2024","2023"];
+    const validYear = VALID_YEARS.includes(detectedYear) ? detectedYear : uploadYear;
     setUploadYear(validYear);
     setUploadType("departments");
     setRawData(csv);
@@ -965,6 +966,8 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
   const [showEmbed, setShowEmbed] = useState(false);
   const { data: subs = [] } = useQuery<EmailSubscriber[]>({
     queryKey: tKey("/api/subscribers", slug),
+    queryFn: () => authFetch(`/api/subscribers?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
   });
 
   const embedCode = `<iframe
@@ -1033,6 +1036,8 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
 function UploadHistoryPanel({ token, slug }: { token: string | null; slug: string }) {
   const { data: uploads = [] } = useQuery<UploadHistory[]>({
     queryKey: tKey("/api/uploads", slug),
+    queryFn: () => authFetch(`/api/uploads?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
   });
 
   if (!uploads.length) return null;
