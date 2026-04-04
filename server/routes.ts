@@ -943,7 +943,7 @@ Never auto-import. Return rows for admin review only.`;
       }
 
       // ── Call Perplexity ──────────────────────────────────────────────────────
-      // Use r1-1776: offline reasoning model — does NOT search the web.
+      // Use sonar-reasoning-pro: chain-of-thought reasoning, replaces deprecated r1-1776.
       // System prompt goes in the messages array (role: "system") per Perplexity API spec.
       const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
         method: "POST",
@@ -952,7 +952,7 @@ Never auto-import. Return rows for admin review only.`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "r1-1776",
+          model: "sonar-reasoning-pro",
           messages: [{ role: "system", content: SYSTEM }, ...apiMessages],
           max_tokens: 2048,
           temperature: 0,
@@ -969,17 +969,20 @@ Never auto-import. Return rows for admin review only.`;
       const rawContent: string = aiJson.choices?.[0]?.message?.content ?? "";
 
       // ── Parse JSON response ──────────────────────────────────────────────────
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+      // sonar-reasoning-pro wraps its chain-of-thought in <think>...</think> before the JSON.
+      // Strip that block first so the JSON regex doesn't match { inside the reasoning chain.
+      const contentAfterThink = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      const jsonMatch = contentAfterThink.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         // AI returned plain text — wrap it as an answer
-        return res.json({ mode: "answer", text: rawContent.trim(), rows: [], notes: [] });
+        return res.json({ mode: "answer", text: contentAfterThink || rawContent.trim(), rows: [], notes: [] });
       }
 
       let parsed: any;
       try {
         parsed = JSON.parse(jsonMatch[0]);
       } catch {
-        return res.json({ mode: "answer", text: rawContent.trim(), rows: [], notes: [] });
+        return res.json({ mode: "answer", text: contentAfterThink || rawContent.trim(), rows: [], notes: [] });
       }
 
       // ── Validate + coerce ────────────────────────────────────────────────────
