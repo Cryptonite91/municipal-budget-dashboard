@@ -18,6 +18,7 @@ import {
 
 import { API_BASE } from "@/lib/api-base";
 import { DataEditor } from "@/components/data-editor";
+import { AdminDocumentsCard } from "@/components/budget-documents";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function authFetch(url: string, token: string | null, opts: RequestInit = {}) {
@@ -757,6 +758,11 @@ function AdminDashboard() {
       {/* Directory listing toggle */}
       {muni && (
         <DirectoryListingCard listed={muni.listed} token={token} slug={slug} />
+      )}
+
+      {/* Budget documents */}
+      {muni && (
+        <AdminDocumentsCard token={token} slug={slug} muniId={muni.id} />
       )}
 
       {/* Data editor — inline view + edit */}

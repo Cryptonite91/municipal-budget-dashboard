@@ -91,6 +91,18 @@ const tables = [
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
   )`,
+  `CREATE TABLE IF NOT EXISTS budget_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    municipality_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    is_public INTEGER NOT NULL DEFAULT 0,
+    uploaded_at TEXT NOT NULL,
+    description TEXT,
+    year TEXT
+  )`,
 ];
 
 // ALTER TABLE migrations for columns added after initial schema

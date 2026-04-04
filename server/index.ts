@@ -14,6 +14,7 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "75mb", // large enough for base64-encoded PDF files (50 MB * ~1.37 overhead)
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },

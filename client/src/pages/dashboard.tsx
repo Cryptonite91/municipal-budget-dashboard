@@ -6,6 +6,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSummary, useYears, useMunicipality, formatCurrency, formatPercent } from "@/hooks/use-budget-data";
 import { CitizenEngagement } from "@/components/citizen-engagement";
+import { PublicBudgetDocuments } from "@/components/budget-documents";
+import { useTenantSlug } from "@/hooks/use-tenant";
 import {
   DollarSign,
   TrendingUp,
@@ -180,6 +182,7 @@ export default function Dashboard() {
   const activeYear = selectedYear || years?.[0] || "";
   const { data: summary, isLoading } = useSummary(activeYear);
   const { data: muni } = useMunicipality();
+  const slug = useTenantSlug();
 
   if (yearsLoading || isLoading) {
     return (
@@ -291,6 +294,10 @@ export default function Dashboard() {
 
       {/* Dollar Breakdown */}
       <DollarBreakdown data={summary.departments} municipalityName={summary.municipalityName} />
+
+      {/* Public Budget Documents */}
+      <PublicBudgetDocuments slug={slug} />
+
       <CitizenEngagement section="overview" />
     </div>
   );

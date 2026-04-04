@@ -6,6 +6,7 @@ import {
   type UploadHistory, type InsertUploadHistory, uploadHistory,
   type CitizenComment, type InsertCitizenComment, citizenComments,
   type EmailSubscriber, type InsertEmailSubscriber, emailSubscribers,
+  type BudgetDocument, type InsertBudgetDocument, budgetDocuments,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
@@ -59,6 +60,11 @@ export interface IStorage {
   createSubscriber(data: InsertEmailSubscriber): Promise<EmailSubscriber>;
   getSubscribers(muniId: number): Promise<EmailSubscriber[]>;
   isSubscribed(muniId: number, email: string): Promise<boolean>;
+  // Budget documents
+  getBudgetDocuments(muniId: number, publicOnly?: boolean): Promise<BudgetDocument[]>;
+  createBudgetDocument(data: InsertBudgetDocument): Promise<BudgetDocument>;
+  updateBudgetDocument(id: number, muniId: number, data: Partial<InsertBudgetDocument>): Promise<BudgetDocument>;
+  deleteBudgetDocument(id: number, muniId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -243,6 +249,34 @@ export class DatabaseStorage implements IStorage {
         eq(emailSubscribers.active, true),
       ));
     return rows.length > 0;
+  }
+
+  // ── Budget documents ─────────────────────────────────────────────────────
+  async getBudgetDocuments(muniId: number, publicOnly = false): Promise<BudgetDocument[]> {
+    const conditions = publicOnly
+      ? and(eq(budgetDocuments.municipalityId, muniId), eq(budgetDocuments.isPublic, true))
+      : eq(budgetDocuments.municipalityId, muniId);
+    return db.select().from(budgetDocuments).where(conditions)
+      .orderBy(budgetDocuments.uploadedAt);
+  }
+
+  async createBudgetDocument(data: InsertBudgetDocument): Promise<BudgetDocument> {
+    const rows = await db.insert(budgetDocuments).values(data).returning();
+    return rows[0];
+  }
+
+  async updateBudgetDocument(id: number, muniId: number, data: Partial<InsertBudgetDocument>): Promise<BudgetDocument> {
+    const rows = await db.update(budgetDocuments)
+      .set(data)
+      .where(and(eq(budgetDocuments.id, id), eq(budgetDocuments.municipalityId, muniId)))
+      .returning();
+    if (!rows[0]) throw new Error("Document not found");
+    return rows[0];
+  }
+
+  async deleteBudgetDocument(id: number, muniId: number): Promise<void> {
+    await db.delete(budgetDocuments)
+      .where(and(eq(budgetDocuments.id, id), eq(budgetDocuments.municipalityId, muniId)));
   }
 }
 

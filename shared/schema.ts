@@ -121,3 +121,21 @@ export const emailSubscribers = sqliteTable("email_subscribers", {
 export const insertEmailSubscriberSchema = createInsertSchema(emailSubscribers).omit({ id: true });
 export type InsertEmailSubscriber = z.infer<typeof insertEmailSubscriberSchema>;
 export type EmailSubscriber = typeof emailSubscribers.$inferSelect;
+
+// ─── Budget documents ───────────────────────────────────────────────────────────────
+export const budgetDocuments = sqliteTable("budget_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
+  filename: text("filename").notNull(),      // stored filename on disk
+  originalName: text("original_name").notNull(), // user-facing display name
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),           // bytes
+  isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
+  uploadedAt: text("uploaded_at").notNull(),
+  description: text("description"),          // optional admin note
+  year: text("year"),                        // optional fiscal year tag
+});
+
+export const insertBudgetDocumentSchema = createInsertSchema(budgetDocuments).omit({ id: true });
+export type InsertBudgetDocument = z.infer<typeof insertBudgetDocumentSchema>;
+export type BudgetDocument = typeof budgetDocuments.$inferSelect;

@@ -7,6 +7,8 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as XLSX from "xlsx";
 import type { Municipality } from "@shared/schema";
+import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import { join, extname } from "path";
 
 // ─── Auth: per-tenant token sessions ─────────────────────────────────────────
 // Map: token → municipalityId
@@ -646,6 +648,139 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const muni = res.locals.muni as Municipality;
     const subscribers = await storage.getSubscribers(muni.id);
     res.json(subscribers);
+  });
+
+  // ── Budget documents ───────────────────────────────────────────────────────────────
+
+  // Determine where to store uploaded files (Railway volume or local fallback)
+  const UPLOADS_BASE = process.env.DATABASE_PATH
+    ? join(process.env.DATABASE_PATH.replace(/\/[^/]+$/, ""), "uploads")
+    : join(process.cwd(), "uploads");
+
+  // Serve uploaded files statically at /uploads/:muniId/:filename
+  // We do this manually so we can control per-file access.
+  app.get("/uploads/:muniId/:filename", async (req, res) => {
+    try {
+      const { muniId, filename } = req.params;
+      const filePath = join(UPLOADS_BASE, muniId, filename);
+      if (!existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+
+      // Check if the document is public OR the requester is an authenticated admin for this muni
+      const docs = await storage.getBudgetDocuments(parseInt(muniId));
+      const doc = docs.find(d => d.filename === filename);
+      if (!doc) return res.status(404).json({ error: "Document not found" });
+
+      if (!doc.isPublic) {
+        // Allow if authenticated admin for this muni
+        const token = req.headers.authorization?.replace("Bearer ", "") ||
+          (req.query.token as string);
+        const tokenMuniId = token ? activeSessions.get(token) : undefined;
+        if (!tokenMuniId || tokenMuniId !== parseInt(muniId)) {
+          return res.status(403).json({ error: "Document is not public" });
+        }
+      }
+
+      res.setHeader("Content-Disposition", `inline; filename="${doc.originalName}"`);
+      res.setHeader("Content-Type", doc.mimeType);
+      res.sendFile(filePath);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // List documents (admin: all; public endpoint: public only)
+  app.get("/api/documents", resolveTenant, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      const tokenMuniId = token ? activeSessions.get(token) : undefined;
+      const isAdmin = !!(tokenMuniId && tokenMuniId === muni.id);
+      const docs = await storage.getBudgetDocuments(muni.id, !isAdmin);
+      res.json(docs);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Upload a document (base64-encoded in JSON body)
+  app.post("/api/documents", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { data, originalName, mimeType, description, year } = req.body;
+      if (!data || !originalName || !mimeType)
+        return res.status(400).json({ error: "data, originalName, and mimeType are required" });
+
+      // Decode base64
+      const buf = Buffer.from(data, "base64");
+      if (buf.length > 50 * 1024 * 1024) // 50 MB limit
+        return res.status(413).json({ error: "File too large (max 50 MB)" });
+
+      // Create directory for this muni
+      const muniDir = join(UPLOADS_BASE, String(muni.id));
+      mkdirSync(muniDir, { recursive: true });
+
+      // Generate unique filename preserving extension
+      const ext = extname(originalName) || ".bin";
+      const storedFilename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+      const filePath = join(muniDir, storedFilename);
+      writeFileSync(filePath, buf);
+
+      const doc = await storage.createBudgetDocument({
+        municipalityId: muni.id,
+        filename: storedFilename,
+        originalName,
+        mimeType,
+        size: buf.length,
+        isPublic: false,
+        uploadedAt: new Date().toISOString(),
+        description: description || null,
+        year: year || null,
+      });
+
+      res.json(doc);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Toggle public visibility of a document
+  app.patch("/api/documents/:id/visibility", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { isPublic } = req.body;
+      const doc = await storage.updateBudgetDocument(
+        parseInt(req.params.id), muni.id, { isPublic: !!isPublic }
+      );
+      res.json(doc);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Update document metadata (name, description, year)
+  app.patch("/api/documents/:id", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { originalName, description, year } = req.body;
+      const doc = await storage.updateBudgetDocument(
+        parseInt(req.params.id), muni.id,
+        { ...(originalName && { originalName }), ...(description !== undefined && { description }), ...(year !== undefined && { year }) }
+      );
+      res.json(doc);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Delete a document
+  app.delete("/api/documents/:id", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const docs = await storage.getBudgetDocuments(muni.id);
+      const doc = docs.find(d => d.id === parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ error: "Document not found" });
+
+      // Delete the physical file
+      const filePath = join(UPLOADS_BASE, String(muni.id), doc.filename);
+      if (existsSync(filePath)) {
+        try { unlinkSync(filePath); } catch {}
+      }
+
+      await storage.deleteBudgetDocument(doc.id, muni.id);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   return httpServer;
