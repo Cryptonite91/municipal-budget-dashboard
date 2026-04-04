@@ -201,6 +201,44 @@ function DirectoryListingCard({
   );
 }
 
+// ─── Upload type constants (used by BudgetChatbot CSV tab) ──────────────────
+type UploadType = "departments" | "revenue" | "projects";
+
+const TYPE_LABELS: Record<UploadType, string> = {
+  departments: "Department Budgets",
+  revenue: "Revenue Sources",
+  projects: "Capital Projects",
+};
+
+const REQUIRED_COLS: Record<UploadType, { key: string; label: string; hints: string[] }[]> = {
+  departments: [
+    { key: "department", label: "Department", hints: ["department", "dept"] },
+    { key: "category", label: "Sub-Category", hints: ["category", "sub-category", "line item"] },
+    { key: "budgetedAmount", label: "Budgeted Amount", hints: ["budgeted amount", "budgeted", "budget"] },
+    { key: "spentAmount", label: "Spent / Actual", hints: ["spent amount", "spent", "actual", "expenditure"] },
+  ],
+  revenue: [
+    { key: "source", label: "Revenue Source", hints: ["source", "revenue source", "name"] },
+    { key: "category", label: "Category", hints: ["category", "type", "revenue type"] },
+    { key: "budgetedAmount", label: "Budgeted Amount", hints: ["budgeted amount", "budgeted", "budget"] },
+    { key: "collectedAmount", label: "Collected / Actual", hints: ["collected amount", "collected", "actual", "received"] },
+  ],
+  projects: [
+    { key: "name", label: "Project Name", hints: ["name", "project", "project name"] },
+    { key: "department", label: "Department", hints: ["department", "dept"] },
+    { key: "totalBudget", label: "Total Budget", hints: ["total budget", "budget"] },
+    { key: "spentToDate", label: "Spent to Date", hints: ["spent to date", "spent"] },
+    { key: "percentComplete", label: "% Complete", hints: ["percent complete", "% complete", "progress"] },
+    { key: "status", label: "Status", hints: ["status"] },
+  ],
+};
+
+const SAMPLE_CSV: Record<UploadType, string> = {
+  departments: `Department,Category,Budgeted Amount,Spent Amount\nPublic Safety,Police Department,5200000,4680000\nPublic Safety,Fire Department,3800000,3420000\nEducation,K-12 Schools,12500000,11250000`,
+  revenue: `Source,Category,Budgeted Amount,Collected Amount\nResidential Property Tax,Property Taxes,18200000,17890000\nEducation Fund Grant,State Aid,8400000,8400000\nBuilding Permits & Fees,Fees,1200000,1150000`,
+  projects: `Name,Department,Total Budget,Spent To Date,Percent Complete,Status\nMain Street Bridge,Public Works,4200000,2940000,68,on-track\nSolar Installation,Education,1800000,1260000,55,at-risk`,
+};
+
 // ─── Import row schema ────────────────────────────────────────────────────────
 interface ImportRow {
   Department: string;
