@@ -447,7 +447,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/upload", resolveTenant, requireAuth, async (req, res) => {
     try {
       const muni = res.locals.muni as Municipality;
-      const { data, type, year, format = "csv", columnMap } = req.body;
+      const { data, type, year, format = "csv", columnMap, aiReviewLog } = req.body;
       if (!data || !type || !year) {
         return res.status(400).json({ error: "Missing data, type, or year" });
       }
@@ -536,7 +536,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         uploadedAt: new Date().toISOString(),
         recordCount,
         status: "success",
-        notes: `Imported ${recordCount} ${type} records for ${year}`,
+        notes: aiReviewLog
+          ? `Imported ${recordCount} ${type} records for ${year} [AI-assisted]`
+          : `Imported ${recordCount} ${type} records for ${year}`,
       });
 
       // Mark onboarding complete if all sections have data
