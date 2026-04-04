@@ -667,11 +667,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Returns the richer proposal shape; never hard-fails (always returns skip
   // or partial on error).
 
-  /** Lightweight heuristic normalizer — no deps beyond what is already imported */
+  /**
+   * Lightweight heuristic normalizer for municipal budget PDFs.
+   * Handles Essex Junction-style layout: repeated column headers, NNN.NNN-Title
+   * account codes, 210-XX-XX department codes, 8-column numeric tables.
+   */
   function normalizePdfText(raw: string): {
     fiscalYears: string[];
+    documentTitle: string;
     summaryTables: Array<{ header: string; rows: string[][] }>;
     detailRows: string[][];
+    departmentHeaders: string[];
     candidateCategories: string[];
     excerpt: string;
   } {
@@ -679,12 +685,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const fiscalYears: string[] = [];
     const summaryTables: Array<{ header: string; rows: string[][] }> = [];
     const detailRows: string[][] = [];
+    const departmentHeaders: string[] = [];
     const candidateCategories: string[] = [];
+    let documentTitle = "";
 
-    // Match fiscal-year patterns: FY2024, FY 2024, 2024-2025, Fiscal Year 2025, etc.
-    const fyRe = /\bFY\s*\d{2,4}\b|\b(?:Fiscal\s+Year\s+)?20\d{2}(?:[\s\-\/]20?\d{2})?\b/gi;
+    // ── Deterministic patterns for Essex Junction / standard muni PDFs ────────
+
+    // Column-header line guard: skip lines that ARE the repeated column header
+    // e.g. "2023 Budget  2023  Actual  2024 Budget  2024  Actual  2025 Budget  2026 Budget  $ Change % Change"
+    const COLUMN_HEADER_RE = /^(?:(?:20\d{2}\s*(?:Budget|Actual|Adopted|Proposed)|\$\s*Change|%\s*Change)[\s\t]+){3,}/i;
+
+    // Account code pattern: NNN.NNN[A-Z]?-Title  (e.g. 010.000-Property Taxes, 800.10X-Essex Police)
+    const ACCOUNT_CODE_RE = /^\d{3}\.\d{3}[A-Za-z]?[-–]/;
+
+    // Department/fund section header: 210-XX-XX - Name  (e.g. 210-10-10 - Administration)
+    const DEPT_HEADER_RE = /^\d{3}-\d{2}-\d{2}\s*[-–]\s*/;
+
+    // Fiscal year patterns: FY26, FY2026, FY 2026, Fiscal Year 2026, 2025-2026
+    const FY_RE = /\bFY\s*\d{2,4}\b|\b(?:Fiscal\s+Year\s+)?20\d{2}(?:[\s\-\/]20?\d{2})?\b/gi;
+
+    // Section label patterns (mixed-case, standalone lines)
+    const SECTION_LABEL_RE = /^(?:Revenues?|Expenditures?|Total\s+Revenues?|Total\s+Expenditures?|Net\s+(?:Revenue|Income|Change)|Fund\s+Balance|Surplus|Deficit)$/i;
+
+    // Currency / numeric helpers
+    const CURRENCY_RE = /\$[\d,]+(?:\.\d{1,2})?|\(\d[\d,]*(?:\.\d{1,2})?\)|\b[\d,]{4,}(?:\.\d{1,2})?\b/;
+    const PCT_RE = /\b\d{1,3}\.?\d*\s*%|n\/a/i;
+
+    // Title line: look for "FY26 General Fund Budget Summary/Detail" style
+    const TITLE_RE = /^FY\s*\d{2,4}\s+.{5,60}$/i;
+
+    // ── Pass 1: collect fiscal years, document title ──────────────────────────
     for (const l of lines) {
-      const m = l.match(fyRe);
+      // Document title (first matching line)
+      if (!documentTitle && TITLE_RE.test(l)) {
+        documentTitle = l;
+      }
+      // Fiscal years
+      const m = l.match(FY_RE);
       if (m) {
         for (const hit of m) {
           const norm = hit.replace(/\s+/g, " ").trim();
@@ -693,68 +730,106 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
 
-    // Currency / numeric field detector
-    const currencyRe = /\$[\d,]+(?:\.\d{1,2})?|\b[\d,]{4,}(?:\.\d{1,2})?\b/;
-    const pctRe = /\b\d{1,3}\.?\d*\s*%/;
-
-    // Collect lines that look like table rows (have 2+ numeric tokens)
+    // ── Pass 2: parse rows ────────────────────────────────────────────────────
     let currentHeader = "";
     let currentBatch: string[][] = [];
 
+    const flushBatch = () => {
+      if (currentBatch.length === 0) return;
+      if (currentBatch.length <= 5) {
+        summaryTables.push({ header: currentHeader, rows: currentBatch });
+      } else {
+        for (const r of currentBatch) detailRows.push(r);
+      }
+      currentBatch = [];
+    };
+
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      const nums = l.match(/[\d,\.]+/g) || [];
-      const hasMultipleNums = nums.length >= 2;
-      const hasCurrency = currencyRe.test(l);
-      const hasPct = pctRe.test(l);
 
-      // Section-header heuristic: all-caps or ends with colon, no digits
-      const isSectionHeader = /^[A-Z][A-Z \-&]{3,}$/.test(l) || (/^[A-Z]/.test(l) && l.endsWith(":") && !hasCurrency);
+      // ── Skip repeated column-header lines ─────────────────────────────────
+      if (COLUMN_HEADER_RE.test(l)) continue;
+      // Also skip if the line is nothing but year-words and whitespace
+      if (/^(?:[\s\d%$BudgetActualAdoptedProposedChange]*){10,}$/.test(l) && !/[a-z]/i.test(l.replace(/budget|actual|adopted|proposed|change/gi, ""))) continue;
 
-      if (isSectionHeader) {
-        // Flush previous batch
-        if (currentBatch.length > 0) {
-          if (currentBatch.length <= 4) {
-            summaryTables.push({ header: currentHeader, rows: currentBatch });
-          } else {
-            for (const r of currentBatch) detailRows.push(r);
-          }
-          currentBatch = [];
-        }
+      // ── Department/fund section headers (210-XX-XX - Name) ────────────────
+      if (DEPT_HEADER_RE.test(l)) {
+        flushBatch();
+        currentHeader = l;
+        const name = l.replace(DEPT_HEADER_RE, "").trim();
+        if (name && !departmentHeaders.includes(name)) departmentHeaders.push(name);
+        continue;
+      }
+
+      // ── Section label lines (Revenues, Expenditures, Total …) ─────────────
+      if (SECTION_LABEL_RE.test(l)) {
+        flushBatch();
         currentHeader = l;
         continue;
       }
 
-      if (hasMultipleNums && (hasCurrency || hasPct || nums.length >= 3)) {
-        // Split on 2+ spaces (tab-like alignment) or pipe
+      // ── All-caps section headers ───────────────────────────────────────────
+      if (/^[A-Z][A-Z \-&]{3,}$/.test(l) && !CURRENCY_RE.test(l)) {
+        flushBatch();
+        currentHeader = l;
+        continue;
+      }
+
+      const nums = l.match(/[\d,.()/]+/g) || [];
+      const hasCurrency = CURRENCY_RE.test(l);
+      const hasPct = PCT_RE.test(l);
+      const numCount = nums.filter(n => /^[\d,]+(\.\d+)?$/.test(n.replace(/[(),]/g, ""))).length;
+
+      // ── Account code rows: NNN.NNN-Title …numbers ────────────────────────
+      if (ACCOUNT_CODE_RE.test(l)) {
+        const cells = l.split(/\s{2,}|\t/).map(c => c.trim()).filter(Boolean);
+        if (cells.length >= 2) {
+          currentBatch.push(cells);
+          // Account title is the label portion before first large number
+          const label = l.replace(ACCOUNT_CODE_RE, "").split(/\s{2,}|\t/)[0]?.trim();
+          if (label && label.length > 1 && label.length < 80 && !candidateCategories.includes(label)) {
+            candidateCategories.push(label);
+          }
+        }
+        continue;
+      }
+
+      // ── Generic numeric row: 3+ currency-like numbers ─────────────────────
+      if (numCount >= 3 && (hasCurrency || hasPct || numCount >= 4)) {
+        // Skip if this looks like a bare totals-only row with no label text
+        // (those are captured but not added to candidateCategories)
         const cells = l.split(/\s{2,}|\t|\|/).map(c => c.trim()).filter(Boolean);
         if (cells.length >= 2) {
           currentBatch.push(cells);
-          // First text cell in a row is a candidate category
-          const textCell = cells.find(c => /[A-Za-z]/.test(c));
-          if (textCell && textCell.length > 2 && textCell.length < 60 && !candidateCategories.includes(textCell)) {
+          const textCell = cells.find(c => /[A-Za-z]/.test(c) && !/^(FY|20)/.test(c));
+          if (textCell && textCell.length > 2 && textCell.length < 80 && !candidateCategories.includes(textCell)) {
             candidateCategories.push(textCell);
           }
         }
       }
     }
-    // Flush last batch
-    if (currentBatch.length > 0) {
-      if (currentBatch.length <= 4) {
-        summaryTables.push({ header: currentHeader, rows: currentBatch });
-      } else {
-        for (const r of currentBatch) detailRows.push(r);
+    flushBatch();
+
+    // ── Build excerpt: skip the first column-header blob, use first data rows ─
+    // Find the first non-header content line and take up to 3000 chars from there
+    let excerptStart = 0;
+    for (let i = 0; i < Math.min(lines.length, 20); i++) {
+      if (!COLUMN_HEADER_RE.test(lines[i]) && lines[i].length > 5) {
+        excerptStart = raw.indexOf(lines[i]);
+        break;
       }
     }
-
-    // Build a compact excerpt for the AI: first ~2000 chars of raw
-    const excerpt = raw.slice(0, 2000).trim();
+    // Include document title + first data section (up to 3000 chars)
+    const excerptRaw = (documentTitle ? documentTitle + "\n" : "") + raw.slice(excerptStart);
+    const excerpt = excerptRaw.slice(0, 3000).trim();
 
     return {
       fiscalYears: fiscalYears.slice(0, 5),
-      summaryTables: summaryTables.slice(0, 6),
-      detailRows: detailRows.slice(0, 30),
-      candidateCategories: candidateCategories.slice(0, 20),
+      documentTitle,
+      summaryTables: summaryTables.slice(0, 8),
+      detailRows: detailRows.slice(0, 40),
+      departmentHeaders: departmentHeaders.slice(0, 20),
+      candidateCategories: candidateCategories.slice(0, 25),
       excerpt,
     };
   }
@@ -777,34 +852,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // ── Step 1: extract text ────────────────────────────────────────────────
       const buf = Buffer.from(data, "base64");
       let rawText = "";
+      let pageCount = 0;
       try {
         const parsed = await pdfParse(buf);
-        rawText = (parsed.text || "").slice(0, 8000).trim();
-      } catch {
+        pageCount = parsed.numpages || 0;
+        rawText = (parsed.text || "").slice(0, 24000).trim();
+        console.log(`[analyze] pdf-parse: ${pageCount} pages, ${rawText.length} chars extracted`);
+      } catch (pdfErr: any) {
+        console.error("[analyze] pdf-parse failed:", pdfErr?.message);
         rawText = "";
       }
 
       // ── Step 2: normalize heuristically ────────────────────────────────────
+      // Guard: if pdf-parse returned nothing, surface a useful low-confidence proposal
+      // instead of sending an empty prompt to the AI (which caused the original failure).
+      if (!rawText) {
+        return res.json({
+          proposal: {
+            document_type: "other",
+            fiscal_year: null,
+            fund_name: null,
+            report_section: null,
+            extraction_quality: "low",
+            summary_tables: [],
+            detail_rows: [],
+            candidate_categories: [],
+            suggested_upload_type: "documents",
+            suggested_destination: "documents",
+            missing_fields: ["all"],
+            admin_questions: [
+              "Text could not be extracted from this PDF. Is it a scanned image? If so, please enter data manually.",
+            ],
+            confidence: 0,
+            rationale: "pdf-parse returned no text. The file may be a scanned image PDF or may be encrypted.",
+            docType: "other",
+            destination: "documents",
+            metadata: { year: null, fiscalYear: null, description: "PDF text extraction failed" },
+            missingFields: ["all"],
+          },
+        });
+      }
+
       const normalized = normalizePdfText(rawText);
 
       // Build a compact structured context for the AI
       const structuredContext = [
+        normalized.documentTitle ? `Document title: ${normalized.documentTitle}` : "",
+        `Pages extracted: ${pageCount || "unknown"}, raw text length: ${rawText.length} chars`,
         normalized.fiscalYears.length ? `Detected fiscal years: ${normalized.fiscalYears.join(", ")}` : "",
+        normalized.departmentHeaders.length
+          ? `Department/fund sections detected (${normalized.departmentHeaders.length}): ${normalized.departmentHeaders.slice(0, 8).join(" | ")}`
+          : "",
         normalized.summaryTables.length
           ? `Summary tables (${normalized.summaryTables.length}): ${normalized.summaryTables.map(t => t.header || "(unlabeled)").join(" | ")}`
           : "",
-        normalized.detailRows.length ? `Detail rows found: ${normalized.detailRows.length}` : "",
+        normalized.detailRows.length
+          ? `Detail account rows found: ${normalized.detailRows.length} (showing first 5 below in excerpt)`
+          : "",
         normalized.candidateCategories.length
-          ? `Candidate categories/accounts: ${normalized.candidateCategories.slice(0, 10).join(", ")}`
+          ? `Candidate account titles: ${normalized.candidateCategories.slice(0, 12).join(", ")}`
           : "",
       ].filter(Boolean).join("\n");
 
-      const prompt = `You are a municipal budget document analyst. Given the structured context and raw text excerpt below, return ONLY a valid JSON object — no markdown, no prose.
+      // Build an annotated sample: first 3 detail rows formatted as a mini-table
+      const sampleRows = normalized.detailRows.slice(0, 5).map(r => r.join(" | ")).join("\n");
 
-Allowed document_type values: budget-summary, budget-detail, annual-report-support, financial-statement, revenue-report, capital-plan, meeting-minutes, other
-Allowed suggested_destination values: revenue, departments, projects, documents
+      const prompt = `You are a municipal budget document analyst. Analyze ONLY the text provided below — do NOT search the web.
+Return ONLY a valid JSON object — no markdown fences, no prose.
 
-Extract every field you can find. For fields you cannot determine, set them to null or [] and add a short clarifying question to admin_questions.
+Allowed document_type: budget-summary, budget-detail, annual-report-support, financial-statement, revenue-report, capital-plan, meeting-minutes, other
+Allowed suggested_destination: revenue, departments, projects, documents
+
+Column layout for this PDF (Essex Junction, VT — 8 columns):
+  account_code | account_title | 2023 Budget | 2023 Actual | 2024 Budget | 2024 Actual | 2025 Budget | 2026 Budget | $ Change | % Change
 
 Return this exact JSON shape (no extra keys):
 {
@@ -829,15 +949,20 @@ Return this exact JSON shape (no extra keys):
 }
 
 Rules:
-- extraction_quality is "high" if fiscal year + destination + 3+ data rows found; "medium" if fiscal year or destination unclear; "low" if almost nothing extractable.
-- admin_questions should be SHORT: e.g. "Which fund does this cover — General Fund or Enterprise Fund?" or "Is this a summary or detailed line-item report?"
-- Never invent dollar amounts. Set numeric fields to null if not found.
-- Do not web-search. Use only what is in the text.
+- extraction_quality = "high" when: fiscal year identified + destination clear + 3+ data rows found.
+- extraction_quality = "medium" when: some data found but fiscal year or destination unclear.
+- extraction_quality = "low" only when almost nothing is extractable from the text.
+- admin_questions must be SHORT and specific, e.g. "Which fund does this cover?" or "Is this a summary or line-item detail report?"
+- Use only the text below. Never invent dollar amounts. Set numeric fields to null if not found.
+- For detail_rows, "budget" = the proposed/current year budget (2026 Budget column); "actual" = most recent actual (2024 Actual).
 
-STRUCTURED CONTEXT (heuristic pre-parse):
+HEURISTIC PRE-PARSE RESULTS:
 ${structuredContext || "(no structured data detected)"}
 
-RAW TEXT EXCERPT:
+SAMPLE DATA ROWS (heuristic):
+${sampleRows || "(none detected)"}
+
+RAW TEXT EXCERPT (first ~3000 chars, column headers stripped):
 ${normalized.excerpt || "(no text could be extracted)"}`;
 
       const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
@@ -847,9 +972,9 @@ ${normalized.excerpt || "(no text could be extracted)"}`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "sonar",
+          model: "sonar-pro",
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 1024,
+          max_tokens: 1536,
           temperature: 0,
         }),
       });
