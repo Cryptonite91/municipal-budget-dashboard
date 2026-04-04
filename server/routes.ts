@@ -656,6 +656,109 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Budget documents ───────────────────────────────────────────────────────────────
 
   // ── AI document analysis ──────────────────────────────────────────────────
+  //
+  // 2-step pipeline:
+  //   Step 1 — pdf-parse: extract raw text from the PDF buffer
+  //   Step 2 — normalize: use heuristics to pull summary tables, detail rows,
+  //            fiscal-year headers, totals, and currency/percent fields, then
+  //            pass the structured excerpt + raw snippet to the AI for
+  //            classification and gap-filling.
+  //
+  // Returns the richer proposal shape; never hard-fails (always returns skip
+  // or partial on error).
+
+  /** Lightweight heuristic normalizer — no deps beyond what is already imported */
+  function normalizePdfText(raw: string): {
+    fiscalYears: string[];
+    summaryTables: Array<{ header: string; rows: string[][] }>;
+    detailRows: string[][];
+    candidateCategories: string[];
+    excerpt: string;
+  } {
+    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const fiscalYears: string[] = [];
+    const summaryTables: Array<{ header: string; rows: string[][] }> = [];
+    const detailRows: string[][] = [];
+    const candidateCategories: string[] = [];
+
+    // Match fiscal-year patterns: FY2024, FY 2024, 2024-2025, Fiscal Year 2025, etc.
+    const fyRe = /\bFY\s*\d{2,4}\b|\b(?:Fiscal\s+Year\s+)?20\d{2}(?:[\s\-\/]20?\d{2})?\b/gi;
+    for (const l of lines) {
+      const m = l.match(fyRe);
+      if (m) {
+        for (const hit of m) {
+          const norm = hit.replace(/\s+/g, " ").trim();
+          if (!fiscalYears.includes(norm)) fiscalYears.push(norm);
+        }
+      }
+    }
+
+    // Currency / numeric field detector
+    const currencyRe = /\$[\d,]+(?:\.\d{1,2})?|\b[\d,]{4,}(?:\.\d{1,2})?\b/;
+    const pctRe = /\b\d{1,3}\.?\d*\s*%/;
+
+    // Collect lines that look like table rows (have 2+ numeric tokens)
+    let currentHeader = "";
+    let currentBatch: string[][] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const nums = l.match(/[\d,\.]+/g) || [];
+      const hasMultipleNums = nums.length >= 2;
+      const hasCurrency = currencyRe.test(l);
+      const hasPct = pctRe.test(l);
+
+      // Section-header heuristic: all-caps or ends with colon, no digits
+      const isSectionHeader = /^[A-Z][A-Z \-&]{3,}$/.test(l) || (/^[A-Z]/.test(l) && l.endsWith(":") && !hasCurrency);
+
+      if (isSectionHeader) {
+        // Flush previous batch
+        if (currentBatch.length > 0) {
+          if (currentBatch.length <= 4) {
+            summaryTables.push({ header: currentHeader, rows: currentBatch });
+          } else {
+            for (const r of currentBatch) detailRows.push(r);
+          }
+          currentBatch = [];
+        }
+        currentHeader = l;
+        continue;
+      }
+
+      if (hasMultipleNums && (hasCurrency || hasPct || nums.length >= 3)) {
+        // Split on 2+ spaces (tab-like alignment) or pipe
+        const cells = l.split(/\s{2,}|\t|\|/).map(c => c.trim()).filter(Boolean);
+        if (cells.length >= 2) {
+          currentBatch.push(cells);
+          // First text cell in a row is a candidate category
+          const textCell = cells.find(c => /[A-Za-z]/.test(c));
+          if (textCell && textCell.length > 2 && textCell.length < 60 && !candidateCategories.includes(textCell)) {
+            candidateCategories.push(textCell);
+          }
+        }
+      }
+    }
+    // Flush last batch
+    if (currentBatch.length > 0) {
+      if (currentBatch.length <= 4) {
+        summaryTables.push({ header: currentHeader, rows: currentBatch });
+      } else {
+        for (const r of currentBatch) detailRows.push(r);
+      }
+    }
+
+    // Build a compact excerpt for the AI: first ~2000 chars of raw
+    const excerpt = raw.slice(0, 2000).trim();
+
+    return {
+      fiscalYears: fiscalYears.slice(0, 5),
+      summaryTables: summaryTables.slice(0, 6),
+      detailRows: detailRows.slice(0, 30),
+      candidateCategories: candidateCategories.slice(0, 20),
+      excerpt,
+    };
+  }
+
   app.post("/api/documents/analyze", resolveTenant, requireAuth, async (req, res) => {
     try {
       const { data, mimeType } = req.body;
@@ -668,42 +771,74 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const apiKey = process.env.PERPLEXITY_API_KEY;
       if (!apiKey) {
-        // Gracefully degrade: no key → skip AI step
         return res.json({ skip: true, reason: "PERPLEXITY_API_KEY not configured" });
       }
 
-      // Decode PDF and extract text
+      // ── Step 1: extract text ────────────────────────────────────────────────
       const buf = Buffer.from(data, "base64");
-      let extractedText = "";
+      let rawText = "";
       try {
         const parsed = await pdfParse(buf);
-        extractedText = (parsed.text || "").slice(0, 3500).trim();
+        rawText = (parsed.text || "").slice(0, 8000).trim();
       } catch {
-        // If pdf-parse fails, send what we have (empty string → AI will note missing info)
-        extractedText = "";
+        rawText = "";
       }
 
-      const prompt = `You are a municipal budget document classifier. Analyze the following extracted text from a PDF and return ONLY a valid JSON object — no markdown, no explanation.
+      // ── Step 2: normalize heuristically ────────────────────────────────────
+      const normalized = normalizePdfText(rawText);
 
-Allowed docTypes: general-fund-budget, enterprise-fund-budget, capital-budget, revenue-report, audit-report, meeting-minutes, other
-Allowed destinations: revenue (revenue sources data), departments (spending data), projects (capital projects), documents (file library only)
+      // Build a compact structured context for the AI
+      const structuredContext = [
+        normalized.fiscalYears.length ? `Detected fiscal years: ${normalized.fiscalYears.join(", ")}` : "",
+        normalized.summaryTables.length
+          ? `Summary tables (${normalized.summaryTables.length}): ${normalized.summaryTables.map(t => t.header || "(unlabeled)").join(" | ")}`
+          : "",
+        normalized.detailRows.length ? `Detail rows found: ${normalized.detailRows.length}` : "",
+        normalized.candidateCategories.length
+          ? `Candidate categories/accounts: ${normalized.candidateCategories.slice(0, 10).join(", ")}`
+          : "",
+      ].filter(Boolean).join("\n");
 
-Return this exact JSON shape:
+      const prompt = `You are a municipal budget document analyst. Given the structured context and raw text excerpt below, return ONLY a valid JSON object — no markdown, no prose.
+
+Allowed document_type values: budget-summary, budget-detail, annual-report-support, financial-statement, revenue-report, capital-plan, meeting-minutes, other
+Allowed suggested_destination values: revenue, departments, projects, documents
+
+Extract every field you can find. For fields you cannot determine, set them to null or [] and add a short clarifying question to admin_questions.
+
+Return this exact JSON shape (no extra keys):
 {
-  "docType": "<one of the allowed docTypes>",
-  "destination": "<one of the allowed destinations>",
-  "metadata": {
-    "year": "<fiscal year string if found, e.g. FY2025, else null>",
-    "fiscalYear": "<same as year or null>",
-    "description": "<one sentence description of the document>"
-  },
-  "confidence": <number 0.0 to 1.0>,
-  "missingFields": ["<list any fields that could not be determined>"],
-  "rationale": "<one or two sentence explanation of your classification>"
+  "document_type": "",
+  "fiscal_year": "",
+  "fund_name": "",
+  "report_section": "",
+  "extraction_quality": "high|medium|low",
+  "summary_tables": [
+    { "label": "", "totals": {} }
+  ],
+  "detail_rows": [
+    { "account_code": "", "account_title": "", "budget": null, "actual": null, "change": null, "pct_change": null, "flag": "revenue|expenditure|unknown" }
+  ],
+  "candidate_categories": [],
+  "suggested_upload_type": "departments|revenue|projects|documents",
+  "suggested_destination": "departments|revenue|projects|documents",
+  "missing_fields": [],
+  "admin_questions": [],
+  "confidence": 0.0,
+  "rationale": ""
 }
 
-Document text:
-${extractedText || "(no text could be extracted)"}`;
+Rules:
+- extraction_quality is "high" if fiscal year + destination + 3+ data rows found; "medium" if fiscal year or destination unclear; "low" if almost nothing extractable.
+- admin_questions should be SHORT: e.g. "Which fund does this cover — General Fund or Enterprise Fund?" or "Is this a summary or detailed line-item report?"
+- Never invent dollar amounts. Set numeric fields to null if not found.
+- Do not web-search. Use only what is in the text.
+
+STRUCTURED CONTEXT (heuristic pre-parse):
+${structuredContext || "(no structured data detected)"}
+
+RAW TEXT EXCERPT:
+${normalized.excerpt || "(no text could be extracted)"}`;
 
       const aiRes = await fetch("https://api.perplexity.ai/chat/completions", {
         method: "POST",
@@ -714,7 +849,7 @@ ${extractedText || "(no text could be extracted)"}`;
         body: JSON.stringify({
           model: "sonar",
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 512,
+          max_tokens: 1024,
           temperature: 0,
         }),
       });
@@ -728,7 +863,7 @@ ${extractedText || "(no text could be extracted)"}`;
       const aiJson = await aiRes.json();
       const raw = aiJson.choices?.[0]?.message?.content ?? "";
 
-      // Extract JSON from the response (strip any markdown fences)
+      // Strip markdown fences if present, extract JSON
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         return res.json({ skip: true, reason: "Could not parse AI response" });
@@ -741,23 +876,42 @@ ${extractedText || "(no text could be extracted)"}`;
         return res.json({ skip: true, reason: "Invalid JSON from AI" });
       }
 
-      // Validate required keys and coerce types
-      const ALLOWED_DOC_TYPES = ["general-fund-budget", "enterprise-fund-budget", "capital-budget", "revenue-report", "audit-report", "meeting-minutes", "other"];
+      // ── Coerce + validate ──────────────────────────────────────────────────
+      const ALLOWED_DOC_TYPES = ["budget-summary", "budget-detail", "annual-report-support", "financial-statement", "revenue-report", "capital-plan", "meeting-minutes", "other"];
       const ALLOWED_DESTINATIONS = ["revenue", "departments", "projects", "documents"];
+      const ALLOWED_QUALITY = ["high", "medium", "low"];
 
-      if (!ALLOWED_DOC_TYPES.includes(proposal.docType)) proposal.docType = "other";
-      if (!ALLOWED_DESTINATIONS.includes(proposal.destination)) proposal.destination = "documents";
-      if (typeof proposal.confidence !== "number" || proposal.confidence < 0 || proposal.confidence > 1) {
-        proposal.confidence = 0.5;
-      }
-      if (!Array.isArray(proposal.missingFields)) proposal.missingFields = [];
+      if (!ALLOWED_DOC_TYPES.includes(proposal.document_type)) proposal.document_type = "other";
+      if (!ALLOWED_DESTINATIONS.includes(proposal.suggested_destination)) proposal.suggested_destination = "documents";
+      if (!ALLOWED_DESTINATIONS.includes(proposal.suggested_upload_type)) proposal.suggested_upload_type = proposal.suggested_destination;
+      if (!ALLOWED_QUALITY.includes(proposal.extraction_quality)) proposal.extraction_quality = "low";
+      if (typeof proposal.confidence !== "number" || proposal.confidence < 0 || proposal.confidence > 1) proposal.confidence = 0.5;
+      if (!Array.isArray(proposal.missing_fields)) proposal.missing_fields = [];
+      if (!Array.isArray(proposal.admin_questions)) proposal.admin_questions = [];
+      if (!Array.isArray(proposal.summary_tables)) proposal.summary_tables = [];
+      if (!Array.isArray(proposal.detail_rows)) proposal.detail_rows = [];
+      if (!Array.isArray(proposal.candidate_categories)) proposal.candidate_categories = normalized.candidateCategories;
       if (!proposal.rationale) proposal.rationale = "";
-      if (!proposal.metadata || typeof proposal.metadata !== "object") proposal.metadata = {};
+      if (!proposal.fiscal_year) proposal.fiscal_year = normalized.fiscalYears[0] || null;
+
+      // Merge heuristic candidate categories if AI left them empty
+      if (proposal.candidate_categories.length === 0 && normalized.candidateCategories.length > 0) {
+        proposal.candidate_categories = normalized.candidateCategories.slice(0, 15);
+      }
+
+      // Also expose legacy fields so the existing UploadWizard still works
+      proposal.docType = proposal.document_type;
+      proposal.destination = proposal.suggested_destination;
+      proposal.metadata = {
+        year: proposal.fiscal_year,
+        fiscalYear: proposal.fiscal_year,
+        description: proposal.rationale,
+      };
+      proposal.missingFields = proposal.missing_fields;
 
       return res.json({ proposal });
     } catch (e: any) {
       console.error("analyze route error:", e);
-      // Never hard-fail — just let the admin proceed manually
       return res.json({ skip: true, reason: e.message });
     }
   });

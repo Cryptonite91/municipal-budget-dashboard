@@ -203,11 +203,25 @@ function DirectoryListingCard({
 
 // ─── AI types (shared with Upload Wizard) ────────────────────────────────────
 interface AIProposal {
+  // Legacy compat fields (UploadWizard state reads these)
   docType: string;
   destination: string;
   metadata: { year?: string | null; fiscalYear?: string | null; description?: string | null };
-  confidence: number;
   missingFields: string[];
+  // Enhanced fields from the richer analyzer
+  document_type: string;
+  fiscal_year: string | null;
+  fund_name: string | null;
+  report_section: string | null;
+  extraction_quality: "high" | "medium" | "low";
+  summary_tables: Array<{ label: string; totals: Record<string, string | number> }>;
+  detail_rows: Array<{ account_code: string; account_title: string; budget: number | null; actual: number | null; change: number | null; pct_change: number | null; flag: string }>;
+  candidate_categories: string[];
+  suggested_upload_type: string;
+  suggested_destination: string;
+  missing_fields: string[];
+  admin_questions: string[];
+  confidence: number;
   rationale: string;
 }
 
@@ -219,6 +233,13 @@ const DESTINATION_LABELS: Record<string, string> = {
 };
 
 const DOC_TYPE_LABELS: Record<string, string> = {
+  // Enhanced analyzer types
+  "budget-summary": "Budget Summary",
+  "budget-detail": "Budget Detail (Line Items)",
+  "annual-report-support": "Annual Report Support File",
+  "financial-statement": "Financial Statement",
+  "capital-plan": "Capital Plan",
+  // Legacy types (kept for backward-compat)
   "general-fund-budget": "General Fund Budget",
   "enterprise-fund-budget": "Enterprise Fund Budget",
   "capital-budget": "Capital Budget",
@@ -629,19 +650,61 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
         {/* AI Proposal step */}
         {step === "ai-proposal" && aiProposal && (
           <div className="space-y-4">
+            {/* Header + extraction quality badge */}
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
               <p className="text-sm font-semibold">AI Proposal</p>
+              {aiProposal.extraction_quality && (
+                <span className={`ml-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${
+                  aiProposal.extraction_quality === "high" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                  : aiProposal.extraction_quality === "medium" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                  : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
+                }`}>
+                  {aiProposal.extraction_quality} extraction
+                </span>
+              )}
               <span className="ml-auto text-xs text-muted-foreground">Review and edit before proceeding</span>
             </div>
 
-            {/* Confidence */}
+            {/* Confidence + data stats row */}
             <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Confidence</span>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Confidence</span>
+                <div className="flex gap-3">
+                  {aiProposal.summary_tables?.length > 0 && (
+                    <span>{aiProposal.summary_tables.length} summary table{aiProposal.summary_tables.length !== 1 ? "s" : ""}</span>
+                  )}
+                  {aiProposal.detail_rows?.length > 0 && (
+                    <span>{aiProposal.detail_rows.length} detail row{aiProposal.detail_rows.length !== 1 ? "s" : ""}</span>
+                  )}
+                </div>
               </div>
               <ConfidenceBar value={aiProposal.confidence} />
             </div>
+
+            {/* Extracted metadata (read-only info strip) */}
+            {(aiProposal.fund_name || aiProposal.report_section || aiProposal.fiscal_year) && (
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {aiProposal.fiscal_year && (
+                  <div className="bg-muted rounded-md px-2 py-1.5">
+                    <p className="text-muted-foreground mb-0.5">Fiscal Year</p>
+                    <p className="font-medium">{aiProposal.fiscal_year}</p>
+                  </div>
+                )}
+                {aiProposal.fund_name && (
+                  <div className="bg-muted rounded-md px-2 py-1.5">
+                    <p className="text-muted-foreground mb-0.5">Fund</p>
+                    <p className="font-medium truncate">{aiProposal.fund_name}</p>
+                  </div>
+                )}
+                {aiProposal.report_section && (
+                  <div className="bg-muted rounded-md px-2 py-1.5">
+                    <p className="text-muted-foreground mb-0.5">Section</p>
+                    <p className="font-medium truncate">{aiProposal.report_section}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Editable fields */}
             <div className="space-y-3">
@@ -686,11 +749,44 @@ function UploadWizard({ token, slug }: { token: string | null; slug: string }) {
               </div>
             </div>
 
-            {/* Missing fields warning */}
-            {aiProposal.missingFields.length > 0 && (
+            {/* Admin questions — short targeted clarifiers */}
+            {aiProposal.admin_questions?.length > 0 && (
+              <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 space-y-1">
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  AI needs clarification
+                </p>
+                <ul className="space-y-0.5">
+                  {aiProposal.admin_questions.map((q, i) => (
+                    <li key={i} className="text-xs text-amber-800 dark:text-amber-300 flex items-start gap-1">
+                      <span className="mt-px">•</span>
+                      <span>{q}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Missing fields (separate from questions) */}
+            {(aiProposal.missing_fields?.length > 0 || aiProposal.missingFields?.length > 0) && !(aiProposal.admin_questions?.length > 0) && (
               <div className="flex gap-2 items-start rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>Could not determine: <strong>{aiProposal.missingFields.join(", ")}</strong>. Please review above.</span>
+                <span>Could not determine: <strong>{(aiProposal.missing_fields?.length ? aiProposal.missing_fields : aiProposal.missingFields).join(", ")}</strong>. Please review above.</span>
+              </div>
+            )}
+
+            {/* Candidate categories */}
+            {aiProposal.candidate_categories?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Detected Categories / Accounts</p>
+                <div className="flex flex-wrap gap-1">
+                  {aiProposal.candidate_categories.slice(0, 12).map((cat, i) => (
+                    <span key={i} className="text-[10px] bg-muted rounded px-1.5 py-0.5 text-muted-foreground">{cat}</span>
+                  ))}
+                  {aiProposal.candidate_categories.length > 12 && (
+                    <span className="text-[10px] text-muted-foreground">+{aiProposal.candidate_categories.length - 12} more</span>
+                  )}
+                </div>
               </div>
             )}
 
