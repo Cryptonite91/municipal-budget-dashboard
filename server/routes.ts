@@ -273,6 +273,62 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true });
   });
 
+  // ── Create new records ──────────────────────────────────────────────────────
+  app.post("/api/revenue", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { source, category, budgetedAmount, collectedAmount, year } = req.body;
+      if (!source || !category || !year) return res.status(400).json({ error: "source, category, and year are required" });
+      const row = await storage.createRevenueSource({
+        municipalityId: muni.id,
+        year: String(year),
+        source: String(source),
+        category: String(category),
+        budgetedAmount: Number(budgetedAmount) || 0,
+        collectedAmount: Number(collectedAmount) || 0,
+      });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/departments", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { department, category, budgetedAmount, spentAmount, year } = req.body;
+      if (!department || !category || !year) return res.status(400).json({ error: "department, category, and year are required" });
+      const row = await storage.createDepartmentBudget({
+        municipalityId: muni.id,
+        year: String(year),
+        department: String(department),
+        category: String(category),
+        budgetedAmount: Number(budgetedAmount) || 0,
+        spentAmount: Number(spentAmount) || 0,
+      });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/projects", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { name, department, totalBudget, spentToDate, percentComplete, startDate, expectedEnd, status, description } = req.body;
+      if (!name || !department) return res.status(400).json({ error: "name and department are required" });
+      const row = await storage.createCapitalProject({
+        municipalityId: muni.id,
+        name: String(name),
+        department: String(department),
+        totalBudget: Number(totalBudget) || 0,
+        spentToDate: Number(spentToDate) || 0,
+        percentComplete: Math.min(100, Math.max(0, parseInt(percentComplete) || 0)),
+        startDate: String(startDate || new Date().toISOString().slice(0, 10)),
+        expectedEnd: String(expectedEnd || new Date().toISOString().slice(0, 10)),
+        status: String(status || "planned"),
+        description: description ? String(description) : null,
+      });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Bulk commit (apply many row-level changes at once) ────────────────────
   app.post("/api/bulk-edit", resolveTenant, requireAuth, async (req, res) => {
     try {

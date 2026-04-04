@@ -20,7 +20,7 @@ import { API_BASE } from "@/lib/api-base";
 import type { RevenueSource, DepartmentBudget, CapitalProject } from "@shared/schema";
 import {
   AlertTriangle, CheckCircle2, Download, Edit3, Save, X, Trash2,
-  ChevronDown, ChevronUp, Info, TrendingUp, TrendingDown, AlertCircle,
+  ChevronDown, ChevronUp, Info, TrendingUp, TrendingDown, AlertCircle, Plus,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -317,6 +317,227 @@ function ChangeSummaryDialog({
   );
 }
 
+// ─── Add Row Modal ───────────────────────────────────────────────────────────────
+
+type AddSection = "revenue" | "department" | "project";
+
+/** A labeled form field used inside AddRowModal */
+function FormRow({
+  label, required, children,
+}: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[140px_1fr] items-start gap-3">
+      <label className="text-xs text-muted-foreground pt-2 text-right leading-tight">
+        {label}{required && <span className="text-destructive ml-0.5">*</span>}
+      </label>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+const fieldCls = `w-full h-8 rounded-md border border-input bg-background px-2.5 text-xs
+  focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring placeholder:text-muted-foreground`;
+const numCls = `${fieldCls} text-right`;
+
+function AddRowModal({
+  section,
+  year,
+  token,
+  slug,
+  onClose,
+  onCreated,
+}: {
+  section: AddSection;
+  year: string;
+  token: string | null;
+  slug: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
+  // Revenue fields
+  const [rSource, setRSource]   = useState("");
+  const [rCat, setRCat]         = useState("Tax Revenue");
+  const [rBudget, setRBudget]   = useState("0");
+  const [rCollected, setRCollected] = useState("0");
+
+  // Department fields
+  const [dDept, setDDept]       = useState("");
+  const [dCat, setDCat]         = useState("General Government");
+  const [dBudget, setDBudget]   = useState("0");
+  const [dSpent, setDSpent]     = useState("0");
+
+  // Project fields
+  const today = new Date().toISOString().slice(0, 10);
+  const nextYear = `${new Date().getFullYear() + 1}-12-31`;
+  const [pName, setPName]           = useState("");
+  const [pDept, setPDept]           = useState("");
+  const [pBudget, setPBudget]       = useState("0");
+  const [pSpent, setPSpent]         = useState("0");
+  const [pPct, setPPct]             = useState("0");
+  const [pStart, setPStart]         = useState(today);
+  const [pEnd, setPEnd]             = useState(nextYear);
+  const [pStatus, setPStatus]       = useState("planned");
+  const [pDesc, setPDesc]           = useState("");
+
+  const revenueCategories = ["Tax Revenue", "Grants & Aid", "Fees & Permits", "Enterprise Funds", "Other"];
+  const deptCategories = ["General Government", "Public Safety", "Public Works", "Parks & Recreation", "Education", "Health & Human Services", "Other"];
+  const projectStatuses = ["planned", "on-track", "at-risk", "behind", "completed"];
+
+  const isValid = section === "revenue"
+    ? rSource.trim().length > 0
+    : section === "department"
+    ? dDept.trim().length > 0
+    : pName.trim().length > 0 && pDept.trim().length > 0;
+
+  const handleSave = async () => {
+    if (!isValid) return;
+    setSaving(true);
+    try {
+      let url = "";
+      let body: Record<string, any> = {};
+      if (section === "revenue") {
+        url = `/api/revenue?tenant=${slug}`;
+        body = { source: rSource.trim(), category: rCat, budgetedAmount: parseFloat(rBudget) || 0, collectedAmount: parseFloat(rCollected) || 0, year };
+      } else if (section === "department") {
+        url = `/api/departments?tenant=${slug}`;
+        body = { department: dDept.trim(), category: dCat, budgetedAmount: parseFloat(dBudget) || 0, spentAmount: parseFloat(dSpent) || 0, year };
+      } else {
+        url = `/api/projects?tenant=${slug}`;
+        body = { name: pName.trim(), department: pDept.trim(), totalBudget: parseFloat(pBudget) || 0, spentToDate: parseFloat(pSpent) || 0, percentComplete: parseInt(pPct) || 0, startDate: pStart, expectedEnd: pEnd, status: pStatus, description: pDesc.trim() || null };
+      }
+      const res = await authFetch(url, token, { method: "POST", body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to create record");
+      toast({ title: "Record created", description: "New row added successfully." });
+      onCreated();
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const title = section === "revenue" ? "Add Revenue Source" : section === "department" ? "Add Department" : "Add Capital Project";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-xl shadow-2xl border w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Plus className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <h2 className="text-sm font-semibold">{title}</h2>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-5 py-5 space-y-4">
+
+          {section === "revenue" && (
+            <>
+              <FormRow label="Source name" required>
+                <input className={fieldCls} placeholder="e.g. Property Tax" value={rSource} onChange={e => setRSource(e.target.value)} autoFocus data-testid="input-add-source" />
+              </FormRow>
+              <FormRow label="Category" required>
+                <select className={fieldCls} value={rCat} onChange={e => setRCat(e.target.value)} data-testid="select-add-category">
+                  {revenueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </FormRow>
+              <FormRow label="Budgeted amount">
+                <input className={numCls} type="number" min="0" placeholder="0" value={rBudget} onChange={e => setRBudget(e.target.value)} data-testid="input-add-budget" />
+              </FormRow>
+              <FormRow label="Collected amount">
+                <input className={numCls} type="number" min="0" placeholder="0" value={rCollected} onChange={e => setRCollected(e.target.value)} data-testid="input-add-collected" />
+              </FormRow>
+            </>
+          )}
+
+          {section === "department" && (
+            <>
+              <FormRow label="Department name" required>
+                <input className={fieldCls} placeholder="e.g. Public Works" value={dDept} onChange={e => setDDept(e.target.value)} autoFocus data-testid="input-add-dept" />
+              </FormRow>
+              <FormRow label="Category" required>
+                <select className={fieldCls} value={dCat} onChange={e => setDCat(e.target.value)} data-testid="select-add-dept-category">
+                  {deptCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </FormRow>
+              <FormRow label="Budgeted amount">
+                <input className={numCls} type="number" min="0" placeholder="0" value={dBudget} onChange={e => setDBudget(e.target.value)} data-testid="input-add-dept-budget" />
+              </FormRow>
+              <FormRow label="Spent amount">
+                <input className={numCls} type="number" min="0" placeholder="0" value={dSpent} onChange={e => setDSpent(e.target.value)} data-testid="input-add-dept-spent" />
+              </FormRow>
+            </>
+          )}
+
+          {section === "project" && (
+            <>
+              <FormRow label="Project name" required>
+                <input className={fieldCls} placeholder="e.g. Road Resurfacing" value={pName} onChange={e => setPName(e.target.value)} autoFocus data-testid="input-add-proj-name" />
+              </FormRow>
+              <FormRow label="Department" required>
+                <input className={fieldCls} placeholder="e.g. Public Works" value={pDept} onChange={e => setPDept(e.target.value)} data-testid="input-add-proj-dept" />
+              </FormRow>
+              <FormRow label="Total budget">
+                <input className={numCls} type="number" min="0" placeholder="0" value={pBudget} onChange={e => setPBudget(e.target.value)} data-testid="input-add-proj-budget" />
+              </FormRow>
+              <FormRow label="Spent to date">
+                <input className={numCls} type="number" min="0" placeholder="0" value={pSpent} onChange={e => setPSpent(e.target.value)} data-testid="input-add-proj-spent" />
+              </FormRow>
+              <FormRow label="% complete">
+                <input className={numCls} type="number" min="0" max="100" placeholder="0" value={pPct} onChange={e => setPPct(e.target.value)} data-testid="input-add-proj-pct" />
+              </FormRow>
+              <FormRow label="Start date">
+                <input className={fieldCls} type="date" value={pStart} onChange={e => setPStart(e.target.value)} data-testid="input-add-proj-start" />
+              </FormRow>
+              <FormRow label="Expected end">
+                <input className={fieldCls} type="date" value={pEnd} onChange={e => setPEnd(e.target.value)} data-testid="input-add-proj-end" />
+              </FormRow>
+              <FormRow label="Status">
+                <select className={fieldCls} value={pStatus} onChange={e => setPStatus(e.target.value)} data-testid="select-add-proj-status">
+                  {projectStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormRow>
+              <FormRow label="Description">
+                <textarea
+                  className={`${fieldCls} h-16 resize-none pt-1.5`}
+                  placeholder="Optional project description"
+                  value={pDesc}
+                  onChange={e => setPDesc(e.target.value)}
+                  data-testid="input-add-proj-desc"
+                />
+              </FormRow>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-3 px-5 py-4 border-t bg-muted/30">
+          <Button variant="outline" size="sm" onClick={onClose} className="flex-1" disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={!isValid || saving} className="flex-1 gap-1.5" data-testid="btn-add-row-save">
+            <Plus className="h-3.5 w-3.5" />
+            {saving ? "Saving…" : "Add Record"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Revenue Editor ───────────────────────────────────────────────────────────
 function RevenueEditor({ token, slug, year }: { token: string | null; slug: string; year: string }) {
   const qc = useQueryClient();
@@ -331,6 +552,7 @@ function RevenueEditor({ token, slug, year }: { token: string | null; slug: stri
   const [pendingDeletes, setPendingDeletes] = useState<Set<number>>(new Set());
   const [showCommit, setShowCommit] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const setField = useCallback((id: number, field: keyof RevenueSource, value: any) => {
     setDrafts(d => ({ ...d, [id]: { ...d[id], [field]: value } }));
@@ -406,7 +628,6 @@ function RevenueEditor({ token, slug, year }: { token: string | null; slug: stri
   const totalCollected = rows.reduce((s, r) => s + (drafts[r.id]?.collectedAmount ?? r.collectedAmount), 0);
 
   if (isLoading) return <div className="py-8 text-center text-sm text-muted-foreground animate-pulse">Loading revenue data…</div>;
-  if (!rows.length) return <div className="py-8 text-center text-sm text-muted-foreground">No revenue data for {year}.</div>;
 
   return (
     <div className="space-y-3">
@@ -425,12 +646,26 @@ function RevenueEditor({ token, slug, year }: { token: string | null; slug: stri
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={exportData}>
           <Download className="h-3 w-3" />Export CSV
         </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-primary border-primary/40 hover:bg-primary/5" onClick={() => setShowAddModal(true)} data-testid="btn-add-revenue">
+          <Plus className="h-3 w-3" />Add Row
+        </Button>
         {changes.length > 0 && (
           <Button size="sm" className="h-7 text-xs gap-1 bg-primary" onClick={() => setShowCommit(true)}>
             <Save className="h-3 w-3" />Commit {changes.length} change{changes.length !== 1 ? "s" : ""}
           </Button>
         )}
       </div>
+
+      {/* Empty state with add prompt */}
+      {!rows.length && (
+        <div className="py-10 flex flex-col items-center gap-3 text-center border rounded-lg bg-muted/20">
+          <p className="text-sm text-muted-foreground">No revenue data for {year}.</p>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddModal(true)}>
+            <Plus className="h-3.5 w-3.5" />Add your first revenue source
+          </Button>
+        </div>
+      )}
+      {!rows.length && null /* skip table render below */}
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border">
@@ -543,6 +778,19 @@ function RevenueEditor({ token, slug, year }: { token: string | null; slug: stri
           isCommitting={isCommitting}
         />
       )}
+      {showAddModal && (
+        <AddRowModal
+          section="revenue"
+          year={year}
+          token={token}
+          slug={slug}
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => {
+            qc.invalidateQueries({ queryKey: tKey(`/api/revenue/${year}`, slug) });
+            qc.invalidateQueries({ queryKey: tKey("/api/revenue", slug) });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -560,6 +808,7 @@ function DepartmentEditor({ token, slug, year }: { token: string | null; slug: s
   const [pendingDeletes, setPendingDeletes] = useState<Set<number>>(new Set());
   const [showCommit, setShowCommit] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const setField = useCallback((id: number, field: keyof DepartmentBudget, value: any) => {
     setDrafts(d => ({ ...d, [id]: { ...d[id], [field]: value } }));
@@ -634,7 +883,6 @@ function DepartmentEditor({ token, slug, year }: { token: string | null; slug: s
   const totalSpent = rows.reduce((s, r) => s + (drafts[r.id]?.spentAmount ?? r.spentAmount), 0);
 
   if (isLoading) return <div className="py-8 text-center text-sm text-muted-foreground animate-pulse">Loading department data…</div>;
-  if (!rows.length) return <div className="py-8 text-center text-sm text-muted-foreground">No department data for {year}.</div>;
 
   return (
     <div className="space-y-3">
@@ -656,12 +904,26 @@ function DepartmentEditor({ token, slug, year }: { token: string | null; slug: s
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={exportData}>
           <Download className="h-3 w-3" />Export CSV
         </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-primary border-primary/40 hover:bg-primary/5" onClick={() => setShowAddModal(true)} data-testid="btn-add-department">
+          <Plus className="h-3 w-3" />Add Row
+        </Button>
         {changes.length > 0 && (
           <Button size="sm" className="h-7 text-xs gap-1" onClick={() => setShowCommit(true)}>
             <Save className="h-3 w-3" />Commit {changes.length} change{changes.length !== 1 ? "s" : ""}
           </Button>
         )}
       </div>
+
+      {/* Empty state */}
+      {!rows.length && (
+        <div className="py-10 flex flex-col items-center gap-3 text-center border rounded-lg bg-muted/20">
+          <p className="text-sm text-muted-foreground">No department data for {year}.</p>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddModal(true)}>
+            <Plus className="h-3.5 w-3.5" />Add your first department
+          </Button>
+        </div>
+      )}
+      {!rows.length && null /* skip table */}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
@@ -773,6 +1035,19 @@ function DepartmentEditor({ token, slug, year }: { token: string | null; slug: s
           isCommitting={isCommitting}
         />
       )}
+      {showAddModal && (
+        <AddRowModal
+          section="department"
+          year={year}
+          token={token}
+          slug={slug}
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => {
+            qc.invalidateQueries({ queryKey: tKey(`/api/departments/${year}`, slug) });
+            qc.invalidateQueries({ queryKey: tKey("/api/departments", slug) });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -789,6 +1064,7 @@ function ProjectsEditor({ token, slug }: { token: string | null; slug: string })
   const [pendingDeletes, setPendingDeletes] = useState<Set<number>>(new Set());
   const [showCommit, setShowCommit] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const setField = useCallback((id: number, field: keyof CapitalProject, value: any) => {
     setDrafts(d => ({ ...d, [id]: { ...d[id], [field]: value } }));
@@ -868,7 +1144,6 @@ function ProjectsEditor({ token, slug }: { token: string | null; slug: string })
   };
 
   if (isLoading) return <div className="py-8 text-center text-sm text-muted-foreground animate-pulse">Loading projects…</div>;
-  if (!rows.length) return <div className="py-8 text-center text-sm text-muted-foreground">No capital projects yet.</div>;
 
   const totalBudget = rows.reduce((s, r) => s + (drafts[r.id]?.totalBudget ?? r.totalBudget), 0);
   const totalSpent = rows.reduce((s, r) => s + (drafts[r.id]?.spentToDate ?? r.spentToDate), 0);
@@ -888,12 +1163,26 @@ function ProjectsEditor({ token, slug }: { token: string | null; slug: string })
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={exportData}>
           <Download className="h-3 w-3" />Export CSV
         </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-primary border-primary/40 hover:bg-primary/5" onClick={() => setShowAddModal(true)} data-testid="btn-add-project">
+          <Plus className="h-3 w-3" />Add Row
+        </Button>
         {changes.length > 0 && (
           <Button size="sm" className="h-7 text-xs gap-1" onClick={() => setShowCommit(true)}>
             <Save className="h-3 w-3" />Commit {changes.length} change{changes.length !== 1 ? "s" : ""}
           </Button>
         )}
       </div>
+
+      {/* Empty state */}
+      {!rows.length && (
+        <div className="py-10 flex flex-col items-center gap-3 text-center border rounded-lg bg-muted/20">
+          <p className="text-sm text-muted-foreground">No capital projects yet.</p>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddModal(true)}>
+            <Plus className="h-3.5 w-3.5" />Add your first project
+          </Button>
+        </div>
+      )}
+      {!rows.length && null /* skip table */}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
@@ -1018,6 +1307,18 @@ function ProjectsEditor({ token, slug }: { token: string | null; slug: string })
           onConfirm={commit}
           onCancel={() => setShowCommit(false)}
           isCommitting={isCommitting}
+        />
+      )}
+      {showAddModal && (
+        <AddRowModal
+          section="project"
+          year=""
+          token={token}
+          slug={slug}
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => {
+            qc.invalidateQueries({ queryKey: tKey("/api/projects", slug) });
+          }}
         />
       )}
     </div>
