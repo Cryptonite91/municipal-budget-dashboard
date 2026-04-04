@@ -72,7 +72,8 @@ export default function Onboarding() {
   };
 
   const goToDashboard = () => {
-    setLocation(`/?tenant=${createdSlug}`);
+    // Navigate to canonical URL format: tenant in real search, hash for route
+    window.location.href = `${window.location.origin}/?tenant=${createdSlug}#/`;
   };
 
   return (
@@ -242,7 +243,7 @@ export default function Onboarding() {
               <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
                 <p className="font-medium">Your unique dashboard URL:</p>
                 <code className="text-xs bg-background border rounded px-2 py-1 block break-all">
-                  {typeof window !== "undefined" ? window.location.origin : ""}/#/?tenant={createdSlug}
+                  {typeof window !== "undefined" ? `${window.location.origin}/?tenant=${createdSlug}#/` : ""}
                 </code>
                 <p className="text-xs text-muted-foreground">Share this link on your town website or with residents.</p>
               </div>

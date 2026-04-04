@@ -930,7 +930,7 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
   });
 
   const embedCode = `<iframe
-  src="${typeof window !== "undefined" ? window.location.origin : ""}/#/?tenant=${slug}"
+  src="${typeof window !== "undefined" ? `${window.location.origin}/?tenant=${slug}#/` : ""}" 
   width="100%" height="700"
   style="border:none;border-radius:8px;"
   title="Budget Transparency Dashboard"
@@ -979,9 +979,9 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
           <p className="text-xs font-medium mb-1 text-muted-foreground uppercase tracking-wide">Public Dashboard Link</p>
           <div className="flex gap-2">
             <code className="flex-1 text-xs bg-muted rounded px-2 py-1.5 truncate">
-              {typeof window !== "undefined" ? window.location.origin : ""}/#/?tenant={slug}
+              {typeof window !== "undefined" ? `${window.location.origin}/?tenant=${slug}#/` : ""}
             </code>
-            <Button size="sm" variant="outline" className="text-xs shrink-0" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/#/?tenant=${slug}`)}>
+            <Button size="sm" variant="outline" className="text-xs shrink-0" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/?tenant=${slug}#/`)}>
               Copy
             </Button>
           </div>
