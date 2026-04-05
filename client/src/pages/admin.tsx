@@ -239,20 +239,38 @@ const SAMPLE_CSV: Record<UploadType, string> = {
   projects: `Name,Department,Total Budget,Spent To Date,Percent Complete,Status\nMain Street Bridge,Public Works,4200000,2940000,68,on-track\nSolar Installation,Education,1800000,1260000,55,at-risk`,
 };
 
-// ─── Import row schema ────────────────────────────────────────────────────────
-interface ImportRow {
+// ─── Import row schemas — one per data type ───────────────────────────────────
+interface DepartmentRow {
   Department: string;
   Category: string;
   "Budgeted Amount": number | null;
   "Spent Amount": number | null;
   Year: string;
 }
+interface RevenueRow {
+  Source: string;
+  Category: string;
+  "Budgeted Amount": number | null;
+  "Collected Amount": number | null;
+  Year: string;
+}
+interface ProjectRow {
+  Name: string;
+  Department: string;
+  "Total Budget": number | null;
+  "Spent To Date": number | null;
+  "Percent Complete": number | null;
+  Status: string;
+  Year: string;
+}
+type ImportRow = DepartmentRow | RevenueRow | ProjectRow;
 
 // ─── Chat message types ───────────────────────────────────────────────────────
 interface ChatMsg {
   role: "user" | "assistant";
   content: string;
   rows?: ImportRow[];
+  dataType?: "departments" | "revenue" | "projects" | null;
   questions?: string[];
   mode?: "import_proposal" | "needs_clarification" | "answer";
   confidence?: number;
@@ -279,6 +297,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
 
   // Proposed rows (editable) — set when AI returns import_proposal
   const [proposedRows, setProposedRows] = useState<ImportRow[] | null>(null);
+  const [proposedDataType, setProposedDataType] = useState<UploadType>("departments");
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
   // CSV import state (feeds into existing handleFile → map → confirm flow)
@@ -354,8 +373,9 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       const assistantMsg: ChatMsg = {
         role: "assistant",
         mode: data.mode,
+        dataType: data.dataType ?? null,
         content: data.mode === "import_proposal"
-          ? `I found ${data.rows?.length ?? 0} rows to import (confidence: ${Math.round((data.confidence ?? 0) * 100)}%).${data.notes?.length ? " " + data.notes.join(" ") : ""}`
+          ? `I found ${data.rows?.length ?? 0} ${data.dataType ?? "department"} rows to import (confidence: ${Math.round((data.confidence ?? 0) * 100)}%).${data.notes?.length ? " " + data.notes.join(" ") : ""}`
           : data.mode === "needs_clarification"
           ? (data.questions?.join(" ") || "I need a bit more information.")
           : (data.text || "Done."),
@@ -369,6 +389,11 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
 
       if (data.mode === "import_proposal" && data.rows?.length > 0) {
         setProposedRows(data.rows);
+        // Use AI-detected data type; fall back to "departments"
+        const detectedType: UploadType =
+          ["departments","revenue","projects"].includes(data.dataType) ? data.dataType : "departments";
+        setProposedDataType(detectedType);
+        setUploadType(detectedType);
       }
 
       setPendingFile(null);
@@ -382,31 +407,48 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   };
 
   // ── Edit a proposed row ──────────────────────────────────────────────────────
-  const updateRow = (idx: number, field: keyof ImportRow, value: string) => {
+  const updateRow = (idx: number, field: string, value: string) => {
+    const numericFields = ["Budgeted Amount","Spent Amount","Collected Amount","Total Budget","Spent To Date","Percent Complete"];
     setProposedRows(rows => rows?.map((r, i) => i !== idx ? r : {
       ...r,
-      [field]: (field === "Budgeted Amount" || field === "Spent Amount")
+      [field]: numericFields.includes(field)
         ? (value === "" ? null : Number(value) || null)
         : value,
     }) ?? null);
   };
 
-  const addRow = () => setProposedRows(rows => [
-    ...(rows ?? []),
-    { Department: "", Category: "", "Budgeted Amount": null, "Spent Amount": null, Year: uploadYear },
-  ]);
+  const addRow = () => {
+    const empty: ImportRow = proposedDataType === "revenue"
+      ? { Source: "", Category: "", "Budgeted Amount": null, "Collected Amount": null, Year: uploadYear }
+      : proposedDataType === "projects"
+      ? { Name: "", Department: "", "Total Budget": null, "Spent To Date": null, "Percent Complete": null, Status: "on-track", Year: uploadYear }
+      : { Department: "", Category: "", "Budgeted Amount": null, "Spent Amount": null, Year: uploadYear };
+    setProposedRows(rows => [...(rows ?? []), empty]);
+  };
 
   const removeRow = (idx: number) => setProposedRows(rows => rows?.filter((_, i) => i !== idx) ?? null);
 
   // ── Download proposed rows as CSV ────────────────────────────────────────────
   const downloadCsv = () => {
     if (!proposedRows?.length) return;
-    const header = "Department,Category,Budgeted Amount,Spent Amount,Year";
-    const body = proposedRows.map(r =>
-      [r.Department, r.Category, r["Budgeted Amount"] ?? "", r["Spent Amount"] ?? "", r.Year]
-        .map(v => `"${String(v).replace(/"/g, '""')}"`)
-        .join(",")
-    ).join("\n");
+    let header: string;
+    let body: string;
+    if (proposedDataType === "revenue") {
+      header = "Source,Category,Budgeted Amount,Collected Amount,Year";
+      body = proposedRows.map(r => { const rr = r as RevenueRow;
+        return [rr.Source, rr.Category, rr["Budgeted Amount"] ?? "", rr["Collected Amount"] ?? "", rr.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(","); }).join("\n");
+    } else if (proposedDataType === "projects") {
+      header = "Name,Department,Total Budget,Spent To Date,Percent Complete,Status,Year";
+      body = proposedRows.map(r => { const pr = r as ProjectRow;
+        return [pr.Name, pr.Department, pr["Total Budget"] ?? "", pr["Spent To Date"] ?? "", pr["Percent Complete"] ?? "", pr.Status, pr.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(","); }).join("\n");
+    } else {
+      header = "Department,Category,Budgeted Amount,Spent Amount,Year";
+      body = proposedRows.map(r => { const dr = r as DepartmentRow;
+        return [dr.Department, dr.Category, dr["Budgeted Amount"] ?? "", dr["Spent Amount"] ?? "", dr.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(","); }).join("\n");
+    }
     const blob = new Blob([header + "\n" + body], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "budget-import.csv"; a.click();
@@ -416,24 +458,51 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   // ── Import proposed rows directly via the existing /api/upload flow ───────────
   const importRows = async () => {
     if (!proposedRows?.length) return;
-    const header = "Department,Category,Budgeted Amount,Spent Amount,Year";
-    const body = proposedRows.map(r =>
-      [r.Department, r.Category, r["Budgeted Amount"] ?? "", r["Spent Amount"] ?? "", r.Year]
-        .map(v => `"${String(v).replace(/"/g, '""')}"`)
-        .join(",")
-    ).join("\n");
-    const csv = header + "\n" + body;
 
-    // Detect year from first row — accept both "FY2025" and "2025" formats
-    const detectedYear = proposedRows[0]?.Year || uploadYear;
+    // Build CSV and column map based on the detected data type
+    let csv: string;
+    let colMap: Record<string, string>;
+
+    if (proposedDataType === "revenue") {
+      const header = "Source,Category,Budgeted Amount,Collected Amount,Year";
+      const rows = proposedRows as RevenueRow[];
+      const body = rows.map(r =>
+        [r.Source, r.Category, r["Budgeted Amount"] ?? "", r["Collected Amount"] ?? "", r.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+      csv = header + "\n" + body;
+      colMap = { source: "Source", category: "Category", budgetedAmount: "Budgeted Amount", collectedAmount: "Collected Amount" };
+    } else if (proposedDataType === "projects") {
+      const header = "Name,Department,Total Budget,Spent To Date,Percent Complete,Status,Year";
+      const rows = proposedRows as ProjectRow[];
+      const body = rows.map(r =>
+        [r.Name, r.Department, r["Total Budget"] ?? "", r["Spent To Date"] ?? "", r["Percent Complete"] ?? "", r.Status, r.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+      csv = header + "\n" + body;
+      colMap = { name: "Name", department: "Department", totalBudget: "Total Budget", spentToDate: "Spent To Date", percentComplete: "Percent Complete", status: "Status" };
+    } else {
+      const header = "Department,Category,Budgeted Amount,Spent Amount,Year";
+      const rows = proposedRows as DepartmentRow[];
+      const body = rows.map(r =>
+        [r.Department, r.Category, r["Budgeted Amount"] ?? "", r["Spent Amount"] ?? "", r.Year]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+      csv = header + "\n" + body;
+      colMap = { department: "Department", category: "Category", budgetedAmount: "Budgeted Amount", spentAmount: "Spent Amount" };
+    }
+
+    // Detect year from first row — accept both "FY2026" and "2026" formats
+    const firstRow = proposedRows[0] as any;
+    const detectedYear: string = firstRow?.Year || uploadYear;
     const VALID_YEARS = ["FY2027","FY2026","FY2025","FY2024","FY2023","2027","2026","2025","2024","2023"];
     const validYear = VALID_YEARS.includes(detectedYear) ? detectedYear : uploadYear;
+
     setUploadYear(validYear);
-    setUploadType("departments");
+    setUploadType(proposedDataType);
     setRawData(csv);
     setFileFormat("csv");
 
-    // Preview it
     setIsPreviewing(true);
     try {
       const res = await authFetch(`/api/upload/preview?tenant=${slug}`, token, {
@@ -442,13 +511,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       });
       const p = await res.json();
       setPreview(p);
-      // Auto-map: our CSV columns match exactly
-      setColumnMap({
-        department: "Department",
-        category: "Category",
-        budgetedAmount: "Budgeted Amount",
-        spentAmount: "Spent Amount",
-      });
+      setColumnMap(colMap);
       setStep("map");
       setInputMode("csv");
     } catch {
@@ -679,40 +742,51 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
                   </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-lg border text-xs">
-                  <table className="w-full">
-                    <thead className="bg-muted">
-                      <tr>
-                        {["Department","Category","Budgeted Amount","Spent Amount","Year"].map(h => (
-                          <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
-                        ))}
-                        <th className="px-2 py-1.5 w-6" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {proposedRows.map((row, i) => (
-                        <tr key={i} className="border-t hover:bg-muted/30">
-                          {(["Department","Category","Budgeted Amount","Spent Amount","Year"] as (keyof ImportRow)[]).map(field => (
-                            <td key={field} className="px-1 py-1">
-                              <input
-                                className="w-full bg-transparent px-1.5 py-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
-                                value={row[field] ?? ""}
-                                onChange={e => updateRow(i, field, e.target.value)}
-                                placeholder={field === "Spent Amount" ? "optional" : ""}
-                                data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
-                              />
-                            </td>
+                {/* Column headers change based on detected data type */}
+                {(() => {
+                  const cols: string[] = proposedDataType === "revenue"
+                    ? ["Source","Category","Budgeted Amount","Collected Amount","Year"]
+                    : proposedDataType === "projects"
+                    ? ["Name","Department","Total Budget","Spent To Date","Percent Complete","Status","Year"]
+                    : ["Department","Category","Budgeted Amount","Spent Amount","Year"];
+                  const optionalFields = ["Spent Amount","Collected Amount","Spent To Date","Percent Complete"];
+                  return (
+                    <div className="overflow-x-auto rounded-lg border text-xs">
+                      <table className="w-full">
+                        <thead className="bg-muted">
+                          <tr>
+                            {cols.map(h => (
+                              <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                            ))}
+                            <th className="px-2 py-1.5 w-6" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {proposedRows.map((row, i) => (
+                            <tr key={i} className="border-t hover:bg-muted/30">
+                              {cols.map(field => (
+                                <td key={field} className="px-1 py-1">
+                                  <input
+                                    className="w-full bg-transparent px-1.5 py-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
+                                    value={(row as any)[field] ?? ""}
+                                    onChange={e => updateRow(i, field, e.target.value)}
+                                    placeholder={optionalFields.includes(field) ? "optional" : ""}
+                                    data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
+                                  />
+                                </td>
+                              ))}
+                              <td className="px-1 py-1 text-center">
+                                <button onClick={() => removeRow(i)} className="text-muted-foreground hover:text-destructive">
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </td>
+                            </tr>
                           ))}
-                          <td className="px-1 py-1 text-center">
-                            <button onClick={() => removeRow(i)} className="text-muted-foreground hover:text-destructive">
-                              <X className="h-3 w-3" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
                 <p className="text-[10px] text-muted-foreground">Edit rows directly, then click Import to continue to column mapping.</p>
               </div>
             )}
