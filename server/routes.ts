@@ -13,7 +13,12 @@ import pdfParse from "pdf-parse";
 
 // ─── Auth: per-tenant token sessions ─────────────────────────────────────────
 // Map: token → municipalityId
-const activeSessions = new Map<string, number>();
+interface SessionInfo {
+  municipalityId: number | null; // null for platform admins
+  role: "municipal" | "platform";
+  email: string;
+}
+const activeSessions = new Map<string, SessionInfo>();
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -34,15 +39,28 @@ async function resolveTenant(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// Auth guard — token must match the muni's session
+// Auth guard — token must be for the correct muni OR a platform admin
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.headers.authorization?.replace("Bearer ", "");
   if (!token) return res.status(401).json({ error: "Authentication required" });
-  const tokenMuniId = activeSessions.get(token);
+  const session = activeSessions.get(token);
   const muni = res.locals.muni as Municipality;
-  if (!tokenMuniId || tokenMuniId !== muni.id) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
+  if (!session) return res.status(401).json({ error: "Authentication required" });
+  // Platform admins have universal access
+  if (session.role === "platform") { res.locals.session = session; return next(); }
+  // Municipal admins must match the tenant
+  if (session.municipalityId !== muni.id) return res.status(401).json({ error: "Authentication required" });
+  res.locals.session = session;
+  next();
+}
+
+// Platform-admin-only guard
+function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) return res.status(401).json({ error: "Authentication required" });
+  const session = activeSessions.get(token);
+  if (!session || session.role !== "platform") return res.status(403).json({ error: "Platform admin access required" });
+  res.locals.session = session;
   next();
 }
 
@@ -79,15 +97,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 
   // ── Auth ──────────────────────────────────────────────────────────────────
+  // ── Municipal admin login (email + password, scoped to one tenant) ────────
   app.post("/api/auth/login", resolveTenant, async (req, res) => {
-    const { password } = req.body;
+    const { email, password } = req.body;
     const muni = res.locals.muni as Municipality;
     if (!password) return res.status(400).json({ error: "Password required" });
+
+    // New path: email + password via admin_users table
+    if (email) {
+      const user = await storage.getAdminUserByEmail(email.trim().toLowerCase());
+      if (!user) return res.status(401).json({ error: "Invalid email or password" });
+      if (user.role !== "municipal" || user.municipalityId !== muni.id) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      const valid = bcrypt.compareSync(password, user.passwordHash);
+      if (!valid) return res.status(401).json({ error: "Invalid email or password" });
+      const token = generateToken();
+      activeSessions.set(token, { municipalityId: muni.id, role: "municipal", email: user.email });
+      return res.json({ token, municipalityId: muni.id, slug: muni.slug, name: muni.name, role: "municipal", email: user.email });
+    }
+
+    // Legacy path: password-only (backwards compat for existing muni admins)
     const valid = bcrypt.compareSync(password, muni.adminPasswordHash);
     if (!valid) return res.status(401).json({ error: "Invalid password" });
     const token = generateToken();
-    activeSessions.set(token, muni.id);
-    res.json({ token, municipalityId: muni.id, slug: muni.slug, name: muni.name });
+    activeSessions.set(token, { municipalityId: muni.id, role: "municipal", email: "" });
+    res.json({ token, municipalityId: muni.id, slug: muni.slug, name: muni.name, role: "municipal", email: "" });
+  });
+
+  // ── Platform admin login (email + password, universal access) ────────────
+  app.post("/api/auth/platform-login", async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+    const user = await storage.getAdminUserByEmail(email.trim().toLowerCase());
+    if (!user || user.role !== "platform") return res.status(401).json({ error: "Invalid email or password" });
+    const valid = bcrypt.compareSync(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: "Invalid email or password" });
+    const token = generateToken();
+    activeSessions.set(token, { municipalityId: null, role: "platform", email: user.email });
+    res.json({ token, role: "platform", email: user.email });
+  });
+
+  // ── Session info (so frontend can query current role/email) ──────────────
+  app.get("/api/auth/session", (req, res) => {
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    if (!token) return res.json({ authenticated: false });
+    const session = activeSessions.get(token);
+    if (!session) return res.json({ authenticated: false });
+    res.json({ authenticated: true, role: session.role, email: session.email, municipalityId: session.municipalityId });
   });
 
   app.post("/api/auth/logout", resolveTenant, (req, res) => {
@@ -96,29 +153,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true });
   });
 
-  // ── Onboarding: register a new municipality ───────────────────────────────
+  // ── Onboarding: register a new municipality (creates pending request) ──────
   app.post("/api/onboard", async (req, res) => {
     try {
-      const { name, state, population, fiscalYear, contactEmail, contactPhone, website, password } = req.body;
+      const { name, state, population, fiscalYear, contactEmail, contactPhone, website, password, adminEmail } = req.body;
       if (!name || !state || !population || !password) {
         return res.status(400).json({ error: "Name, state, population, and password are required" });
       }
+      if (!adminEmail || !adminEmail.includes("@")) {
+        return res.status(400).json({ error: "A valid admin email address is required" });
+      }
       // Generate slug
       let baseSlug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${state.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-      // Ensure uniqueness
       let slug = baseSlug;
       let counter = 1;
       while (await storage.getMunicipalityBySlug(slug)) {
         slug = `${baseSlug}-${counter++}`;
       }
       const adminPasswordHash = bcrypt.hashSync(password, 10);
+      // Create municipality with approval_status = "pending" and listed = false
       const muni = await storage.createMunicipality({
         slug,
         name,
         state,
         population: parseInt(population),
         fiscalYear: fiscalYear || "FY2026",
-        contactEmail: contactEmail || null,
+        contactEmail: contactEmail || adminEmail,
         contactPhone: contactPhone || null,
         website: website || null,
         lastUpdated: new Date().toISOString(),
@@ -127,11 +187,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         departmentsPublished: false,
         projectsPublished: false,
         onboardingComplete: false,
+        listed: false,
+        approvalStatus: "pending",
+      } as any);
+      // Create the admin user record
+      await storage.createAdminUser({
+        email: adminEmail.trim().toLowerCase(),
+        passwordHash: adminPasswordHash,
+        role: "municipal",
+        municipalityId: muni.id,
+        createdAt: new Date().toISOString(),
       });
-      // Auto-login
-      const token = generateToken();
-      activeSessions.set(token, muni.id);
-      res.json({ token, municipality: muni });
+      // No auto-login for pending municipalities — they must wait for approval
+      res.json({ pending: true, municipality: { id: muni.id, name: muni.name, slug: muni.slug, approvalStatus: "pending" } });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Platform admin: list pending municipalities ────────────────────────────
+  app.get("/api/admin/pending-municipalities", requirePlatformAdmin, async (_req, res) => {
+    try {
+      const pending = await storage.getPendingMunicipalities();
+      res.json(pending);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Platform admin: approve or reject a municipality ─────────────────────
+  app.post("/api/admin/municipalities/:id/approval", requirePlatformAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body; // "approved" | "rejected"
+      if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "status must be approved or rejected" });
+      await storage.approveMunicipality(id, status);
+      res.json({ success: true, status });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Platform admin: list all municipalities ───────────────────────────────
+  app.get("/api/admin/municipalities", requirePlatformAdmin, async (_req, res) => {
+    try {
+      const all = await storage.getAllMunicipalities();
+      res.json(all);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -474,8 +575,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const muni = res.locals.muni as Municipality;
       const { data, type, format = "csv", columnMap, aiReviewLog } = req.body;
       const rawYear: string = req.body.year ?? "";
-      // Normalise year: strip leading "FY" so "FY2026" → "2026" (matches existing DB rows)
-      const year: string = rawYear.replace(/^FY/i, "");
+      // Normalise year: extract first 4-digit number, e.g.:
+      //   "FY2026" → "2026",  "Fiscal Year 2026" → "2026",  "2026-2027" → "2026"
+      const yearMatch = rawYear.match(/\b(20\d{2})\b/);
+      const year: string = yearMatch ? yearMatch[1] : rawYear.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
       if (!data || !type || !year) {
         return res.status(400).json({ error: "Missing data, type, or year" });
       }
@@ -924,7 +1027,7 @@ TYPE: "departments" — department expenditure budgets
   - Category = subcategory/line item (e.g. "Police", "Salaries")
   - Budgeted Amount = approved budget, plain number, no $ or commas
   - Spent Amount = actual/YTD spent if available, else null
-  - Year = fiscal year string (e.g. "FY2026")
+  - Year = plain numeric year ONLY (e.g. 2026). Strip any prefix: "FY2026" → 2026, "Fiscal Year 2026" → 2026.
 
 TYPE: "revenue" — revenue sources / incoming funds
   Columns: Source | Category | Budgeted Amount | Collected Amount | Year
@@ -932,7 +1035,7 @@ TYPE: "revenue" — revenue sources / incoming funds
   - Category = revenue category (e.g. "Taxes", "Intergovernmental", "Fees")
   - Budgeted Amount = projected revenue, plain number
   - Collected Amount = actual revenue collected if available, else null
-  - Year = fiscal year string
+  - Year = plain numeric year ONLY (e.g. 2026). Strip any prefix.
 
 TYPE: "projects" — capital projects
   Columns: Name | Department | Total Budget | Spent To Date | Percent Complete | Status | Year
@@ -942,13 +1045,14 @@ TYPE: "projects" — capital projects
   - Spent To Date = amount spent so far, plain number
   - Percent Complete = integer 0-100
   - Status = one of: on-track | at-risk | behind
-  - Year = fiscal year string
+  - Year = plain numeric year ONLY (e.g. 2026)
 
 Detection rules:
 - If the document section is labelled "Revenues", "Revenue Sources", "Incoming", use type "revenue"
 - If the document section is labelled "Expenditures", "Appropriations", "Expenses", "Spending", use type "departments"
 - If rows describe multi-year projects with completion %, use type "projects"
 - If the document contains BOTH revenue and expenditure sections, propose the larger section first and note the other exists
+- YEAR RULE: Always output Year as a plain 4-digit number (e.g. 2026). Never output "FY2026", "FY 2026", "Fiscal Year 2026", or any prefixed form. If you cannot confidently determine the year from the document, set Year to null and include a clarifying question in the questions array.
 
 When the admin uploads a budget document, analyze it and either:
 1. Return proposed import rows (if you have enough data), OR
@@ -1310,8 +1414,10 @@ ${normalized.excerpt || "(no text could be extracted)"}`;
         // Allow if authenticated admin for this muni
         const token = req.headers.authorization?.replace("Bearer ", "") ||
           (req.query.token as string);
-        const tokenMuniId = token ? activeSessions.get(token) : undefined;
-        if (!tokenMuniId || tokenMuniId !== parseInt(muniId)) {
+        const sess = token ? activeSessions.get(token) : undefined;
+        const tokenMuniId = sess?.municipalityId ?? null;
+        const isPlatform = sess?.role === "platform";
+        if (!isPlatform && (!tokenMuniId || tokenMuniId !== parseInt(muniId))) {
           return res.status(403).json({ error: "Document is not public" });
         }
       }
@@ -1329,8 +1435,9 @@ ${normalized.excerpt || "(no text could be extracted)"}`;
     try {
       const muni = res.locals.muni as Municipality;
       const token = req.headers.authorization?.replace("Bearer ", "");
-      const tokenMuniId = token ? activeSessions.get(token) : undefined;
-      const isAdmin = !!(tokenMuniId && tokenMuniId === muni.id);
+      const sess2 = token ? activeSessions.get(token) : undefined;
+      const tokenMuniId2 = sess2?.municipalityId ?? null;
+      const isAdmin = !!(sess2 && (sess2.role === "platform" || tokenMuniId2 === muni.id));
       const docs = await storage.getBudgetDocuments(muni.id, !isAdmin);
       res.json(docs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }

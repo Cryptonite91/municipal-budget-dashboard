@@ -23,11 +23,28 @@ export const municipalities = sqliteTable("municipalities", {
   onboardingComplete: integer("onboarding_complete", { mode: "boolean" }).notNull().default(false),
   // Directory listing — when false, municipality is hidden from explorer AND public URL shows placeholder
   listed: integer("listed", { mode: "boolean" }).notNull().default(false),
+  // Approval status: pending | approved | rejected  (approved = live)
+  approvalStatus: text("approval_status").notNull().default("approved"),
 });
 
 export const insertMunicipalitySchema = createInsertSchema(municipalities).omit({ id: true });
 export type InsertMunicipality = z.infer<typeof insertMunicipalitySchema>;
 export type Municipality = typeof municipalities.$inferSelect;
+
+// ─── Admin users (municipal or platform role) ────────────────────────────────
+export const adminUsers = sqliteTable("admin_users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  // role: "municipal" = scoped to one municipality; "platform" = super-admin
+  role: text("role").notNull().default("municipal"), // "municipal" | "platform"
+  municipalityId: integer("municipality_id"),         // null for platform admins
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true });
+export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
+export type AdminUser = typeof adminUsers.$inferSelect;
 
 // ─── Revenue sources ──────────────────────────────────────────────────────────
 export const revenueSources = sqliteTable("revenue_sources", {

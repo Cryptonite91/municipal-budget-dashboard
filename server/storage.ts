@@ -7,6 +7,7 @@ import {
   type CitizenComment, type InsertCitizenComment, citizenComments,
   type EmailSubscriber, type InsertEmailSubscriber, emailSubscribers,
   type BudgetDocument, type InsertBudgetDocument, budgetDocuments,
+  type AdminUser, type InsertAdminUser, adminUsers,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
@@ -65,6 +66,12 @@ export interface IStorage {
   createBudgetDocument(data: InsertBudgetDocument): Promise<BudgetDocument>;
   updateBudgetDocument(id: number, muniId: number, data: Partial<InsertBudgetDocument>): Promise<BudgetDocument>;
   deleteBudgetDocument(id: number, muniId: number): Promise<void>;
+  // Admin users
+  getAdminUserByEmail(email: string): Promise<AdminUser | undefined>;
+  createAdminUser(data: InsertAdminUser): Promise<AdminUser>;
+  getAdminUsersByMunicipality(muniId: number): Promise<AdminUser[]>;
+  getPendingMunicipalities(): Promise<Municipality[]>;
+  approveMunicipality(id: number, status: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -277,6 +284,33 @@ export class DatabaseStorage implements IStorage {
   async deleteBudgetDocument(id: number, muniId: number): Promise<void> {
     await db.delete(budgetDocuments)
       .where(and(eq(budgetDocuments.id, id), eq(budgetDocuments.municipalityId, muniId)));
+  }
+
+  // ── Admin users ──────────────────────────────────────────────────────────────
+  async getAdminUserByEmail(email: string): Promise<AdminUser | undefined> {
+    const rows = await db.select().from(adminUsers).where(eq(adminUsers.email, email.toLowerCase()));
+    return rows[0];
+  }
+
+  async createAdminUser(data: InsertAdminUser): Promise<AdminUser> {
+    const rows = await db.insert(adminUsers).values({ ...data, email: data.email.toLowerCase() }).returning();
+    return rows[0];
+  }
+
+  async getAdminUsersByMunicipality(muniId: number): Promise<AdminUser[]> {
+    return db.select().from(adminUsers).where(eq(adminUsers.municipalityId, muniId));
+  }
+
+  async getPendingMunicipalities(): Promise<Municipality[]> {
+    return db.select().from(municipalities).where(eq(municipalities.approvalStatus, "pending"));
+  }
+
+  async approveMunicipality(id: number, status: string): Promise<void> {
+    await db.update(municipalities).set({ approvalStatus: status }).where(eq(municipalities.id, id));
+    // When approved, also set listed = true
+    if (status === "approved") {
+      await db.update(municipalities).set({ listed: true }).where(eq(municipalities.id, id));
+    }
   }
 }
 

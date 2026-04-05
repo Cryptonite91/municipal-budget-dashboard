@@ -8,6 +8,7 @@ import {
   HelpCircle,
   Plus,
   Globe,
+  Lock,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -48,7 +49,7 @@ export function AppSidebar() {
   ];
 
   const adminItems = [
-    { title: "Data Upload", path: "/admin", icon: Upload },
+    { title: "Log In", path: "/admin", icon: Lock },
   ];
 
   const supportItems = [

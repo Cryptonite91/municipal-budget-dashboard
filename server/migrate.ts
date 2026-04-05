@@ -105,16 +105,29 @@ const tables = [
   )`,
 ];
 
+// New table: admin_users (municipal + platform admins)
+const adminUsersTable = `CREATE TABLE IF NOT EXISTS admin_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'municipal',
+  municipality_id INTEGER,
+  created_at TEXT NOT NULL
+)`;
+
 // ALTER TABLE migrations for columns added after initial schema
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE budget_documents ADD COLUMN ai_review_log TEXT`,
+  `ALTER TABLE municipalities ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'`,
 ];
 
 export async function runMigrations() {
   for (const sql of tables) {
     await migrationClient.execute(sql);
   }
+  // Create admin_users table
+  await migrationClient.execute(adminUsersTable);
   // Run alterations, ignoring "duplicate column" errors (idempotent)
   for (const sql of alterations) {
     try {
@@ -129,5 +142,46 @@ export async function runMigrations() {
   await migrationClient.execute(
     `UPDATE municipalities SET listed = 1 WHERE slug IN ('maplewood-vt', 'riverdale-nh')`
   );
+  // Set existing demo munis as approved
+  await migrationClient.execute(
+    `UPDATE municipalities SET approval_status = 'approved' WHERE approval_status IS NULL OR approval_status = ''`
+  );
+  // Seed platform admin if PLATFORM_ADMIN_EMAIL + PLATFORM_ADMIN_PASSWORD_HASH env vars are set
+  // Also seed demo municipal admins for existing demo tenants (idempotent)
+  try {
+    const bcryptMod = await import("bcryptjs");
+    const now = new Date().toISOString();
+    // Platform admin from env
+    const platformEmail = process.env.PLATFORM_ADMIN_EMAIL;
+    const platformPass = process.env.PLATFORM_ADMIN_PASSWORD;
+    if (platformEmail && platformPass) {
+      const hash = bcryptMod.hashSync(platformPass, 10);
+      await migrationClient.execute(
+        `INSERT OR IGNORE INTO admin_users (email, password_hash, role, municipality_id, created_at)
+         VALUES ('${platformEmail}', '${hash}', 'platform', NULL, '${now}')`
+      );
+    }
+    // Seed demo municipal admins tied to existing demo tenants
+    const demoAdmins = [
+      { email: "admin@maplewood-vt.gov", password: "maplewood", slug: "maplewood-vt" },
+      { email: "admin@riverdale-nh.gov", password: "riverdale", slug: "riverdale-nh" },
+      { email: "admin@essex-junction-vermont.gov", password: "essexjunction", slug: "essex-junction-vermont" },
+    ];
+    for (const da of demoAdmins) {
+      const muniRow = await migrationClient.execute(
+        `SELECT id FROM municipalities WHERE slug = '${da.slug}' LIMIT 1`
+      );
+      const muniId = muniRow.rows[0]?.id;
+      if (muniId) {
+        const hash = bcryptMod.hashSync(da.password, 10);
+        await migrationClient.execute(
+          `INSERT OR IGNORE INTO admin_users (email, password_hash, role, municipality_id, created_at)
+           VALUES ('${da.email}', '${hash}', 'municipal', ${muniId}, '${now}')`
+        );
+      }
+    }
+  } catch (e: any) {
+    console.warn("[migrate] admin_user seed warning:", e.message);
+  }
   console.log("[migrate] Tables verified/created");
 }

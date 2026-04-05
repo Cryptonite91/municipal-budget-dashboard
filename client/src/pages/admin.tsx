@@ -33,32 +33,79 @@ function authFetch(url: string, token: string | null, opts: RequestInit = {}) {
   });
 }
 
-// ─── Login gate ───────────────────────────────────────────────────────────────
+// ─── Login gate ─────────────────────────────────────────────────────
 function LoginGate() {
-  const { login, isLoading, error } = useAuth();
+  const { login, platformLogin, isLoading, error } = useAuth();
   const slug = useTenantSlug();
+  const [isPlatformMode, setIsPlatformMode] = useState(false);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isPlatformMode) {
+      await platformLogin({ email, password });
+    } else {
+      await login({ email, password, tenantSlug: slug });
+    }
+  };
 
   return (
     <div className="p-4 md:p-6 max-w-[900px] mx-auto">
-      <h1 className="text-xl font-bold mb-1">Admin Panel</h1>
-      <p className="text-sm text-muted-foreground mb-8">Manage data uploads, publish settings, and citizen feedback.</p>
+      <h1 className="text-xl font-bold mb-1">Admin Portal</h1>
+      <p className="text-sm text-muted-foreground mb-8">Sign in to manage data, publish settings, and citizen feedback.</p>
+
+      {/* Login mode toggle */}
+      <div className="flex gap-1 max-w-sm mx-auto mb-4 p-1 bg-muted rounded-lg">
+        <button
+          type="button"
+          onClick={() => { setIsPlatformMode(false); setEmail(""); setPassword(""); }}
+          className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${!isPlatformMode ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          data-testid="btn-mode-municipal"
+        >
+          Municipality Admin
+        </button>
+        <button
+          type="button"
+          onClick={() => { setIsPlatformMode(true); setEmail(""); setPassword(""); }}
+          className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${isPlatformMode ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          data-testid="btn-mode-platform"
+        >
+          Platform Admin
+        </button>
+      </div>
+
       <Card className="max-w-sm mx-auto" data-testid="card-login">
         <CardHeader className="text-center pb-4">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <Lock className="h-6 w-6 text-primary" />
+            {isPlatformMode ? <ShieldCheck className="h-6 w-6 text-primary" /> : <Lock className="h-6 w-6 text-primary" />}
           </div>
-          <CardTitle className="text-base">Admin Access Required</CardTitle>
-          <CardDescription>Enter your administrator password to continue.</CardDescription>
+          <CardTitle className="text-base">
+            {isPlatformMode ? "Platform Admin Login" : "Municipality Admin Login"}
+          </CardTitle>
+          <CardDescription>
+            {isPlatformMode
+              ? "Access all municipalities with your platform admin account."
+              : "Sign in with your municipal admin email and password."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={async e => { e.preventDefault(); await login(password, slug); }} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <Input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="Admin email address"
+              autoFocus
+              autoComplete="email"
+              data-testid="input-admin-email"
+            />
             <Input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Admin password"
-              autoFocus
+              placeholder="Password"
+              autoComplete="current-password"
               data-testid="input-admin-password"
             />
             {error && (
@@ -66,15 +113,19 @@ function LoginGate() {
                 <AlertCircle className="h-3.5 w-3.5" />{error}
               </p>
             )}
-            <Button type="submit" className="w-full" disabled={!password.trim() || isLoading} data-testid="btn-login">
+            <Button type="submit" className="w-full" disabled={!email.trim() || !password.trim() || isLoading} data-testid="btn-login">
               {isLoading ? "Verifying…" : "Sign In"}
             </Button>
           </form>
+          {!isPlatformMode && (
+            <p className="text-xs text-muted-foreground text-center mt-3">
+              Demo: <span className="font-mono">admin@maplewood-vt.gov</span> / <span className="font-mono">maplewood</span>
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
-  );
-}
+  );}
 
 // ─── Publish toggle card ──────────────────────────────────────────────────────
 function PublishCard({
@@ -388,7 +439,14 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       setMessages(prev => [...prev, assistantMsg]);
 
       if (data.mode === "import_proposal" && data.rows?.length > 0) {
-        setProposedRows(data.rows);
+        // Normalise Year values: strip any FY prefix (FY2026 → 2026)
+        const normaliseYear = (y: any) => {
+          const s = String(y ?? "");
+          const m = s.match(/\b(20\d{2})\b/);
+          return m ? m[1] : s.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
+        };
+        const normRows = (data.rows || []).map((r: any) => ({ ...r, Year: normaliseYear(r.Year) }));
+        setProposedRows(normRows);
         // Use AI-detected data type; fall back to "departments"
         const detectedType: UploadType =
           ["departments","revenue","projects"].includes(data.dataType) ? data.dataType : "departments";
@@ -492,11 +550,13 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       colMap = { department: "Department", category: "Category", budgetedAmount: "Budgeted Amount", spentAmount: "Spent Amount" };
     }
 
-    // Detect year from first row — accept both "FY2026" and "2026" formats
+    // Normalise year: extract plain 4-digit number from any format
     const firstRow = proposedRows[0] as any;
-    const detectedYear: string = firstRow?.Year || uploadYear;
-    const VALID_YEARS = ["FY2027","FY2026","FY2025","FY2024","FY2023","2027","2026","2025","2024","2023"];
-    const validYear = VALID_YEARS.includes(detectedYear) ? detectedYear : uploadYear;
+    const rawDetected: string = String(firstRow?.Year || uploadYear || "");
+    const yearNumMatch = rawDetected.match(/\b(20\d{2})\b/);
+    const detectedYear: string = yearNumMatch ? yearNumMatch[1] : rawDetected.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
+    const VALID_YEARS = ["2027","2026","2025","2024","2023","2022","2021"];
+    const validYear = VALID_YEARS.includes(detectedYear) ? detectedYear : (detectedYear || uploadYear);
 
     setUploadYear(validYear);
     setUploadType(proposedDataType);
@@ -1140,25 +1200,86 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
 }
 
 // ─── Admin dashboard ──────────────────────────────────────────────────────────
+function PlatformAdminPanel({ token }: { token: string | null }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const pending: any[] = useQuery({
+    queryKey: ["/api/admin/pending-municipalities"],
+    queryFn: () => fetch(`${API_BASE}/api/admin/pending-municipalities`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.ok ? r.json() : []),
+    enabled: !!token,
+  }).data ?? [];
+
+  const approve = async (id: number, status: string) => {
+    await fetch(`${API_BASE}/api/admin/municipalities/${id}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status }),
+    });
+    toast({ title: status === "approved" ? "Municipality approved" : "Municipality rejected" });
+    qc.invalidateQueries({ queryKey: ["/api/admin/pending-municipalities"] });
+  };
+
+  if (pending.length === 0) return null;
+  return (
+    <Card data-testid="card-platform-pending">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          Pending Approval Requests
+          <Badge variant="destructive" className="ml-1 text-xs">{pending.length}</Badge>
+        </CardTitle>
+        <CardDescription>Review new municipality registration requests.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {pending.map((m: any) => (
+          <div key={m.id} className="flex items-center justify-between p-3 bg-muted/40 rounded-lg">
+            <div>
+              <p className="text-sm font-medium">{m.name}, {m.state}</p>
+              <p className="text-xs text-muted-foreground">Pop. {m.population?.toLocaleString()} · {m.contactEmail || "No email"}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => approve(m.id, "rejected")} data-testid={`btn-reject-${m.id}`}>
+                Reject
+              </Button>
+              <Button size="sm" className="h-7 text-xs"
+                onClick={() => approve(m.id, "approved")} data-testid={`btn-approve-${m.id}`}>
+                Approve
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AdminDashboard() {
-  const { logout, getToken } = useAuth();
+  const { logout, getToken, isPlatformAdmin, email: adminEmail } = useAuth();
   const slug = useTenantSlug();
   const token = getToken();
   const { data: muni } = useMunicipality();
+  const isplatform = isPlatformAdmin();
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-[900px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Admin Panel</h1>
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            Admin Portal
+            {isplatform && <Badge variant="secondary" className="text-xs font-normal gap-1 py-0"><ShieldCheck className="h-3 w-3" />Platform Admin</Badge>}
+          </h1>
+          {adminEmail && <p className="text-xs text-muted-foreground mt-0.5">{adminEmail}</p>}
           <p className="text-sm text-muted-foreground">{muni?.name}, {muni?.state}</p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5 py-1 text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-800">
             <ShieldCheck className="h-3.5 w-3.5" />Admin
           </Badge>
-          <Button variant="ghost" size="sm" onClick={() => logout(slug)} className="text-muted-foreground" data-testid="btn-logout">
+          <Button variant="ghost" size="sm" onClick={() => logout(isplatform ? undefined : slug)} className="text-muted-foreground" data-testid="btn-logout">
             <LogOut className="h-4 w-4 mr-1.5" />Sign Out
           </Button>
         </div>
@@ -1203,6 +1324,9 @@ function AdminDashboard() {
 
       {/* Engagement */}
       <EngagementPanel token={token} slug={slug} />
+
+      {/* Platform admin: pending approvals */}
+      {isplatform && <PlatformAdminPanel token={token} />}
     </div>
   );
 }

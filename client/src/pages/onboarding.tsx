@@ -11,7 +11,7 @@ import { API_BASE } from "@/lib/api-base";
 const STEPS = [
   { id: 1, label: "Municipality Info" },
   { id: 2, label: "Admin Account" },
-  { id: 3, label: "Review & Launch" },
+  { id: 3, label: "Review & Submit" },
 ];
 
 const US_STATES = ["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island","South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"];
@@ -31,6 +31,7 @@ export default function Onboarding() {
     contactEmail: "",
     contactPhone: "",
     website: "",
+    adminEmail: "",
     password: "",
     confirmPassword: "",
   });
@@ -39,7 +40,7 @@ export default function Onboarding() {
 
   const canNext = () => {
     if (step === 1) return form.name.trim() && form.state && form.population;
-    if (step === 2) return form.password.length >= 6 && form.password === form.confirmPassword;
+    if (step === 2) return form.adminEmail.includes("@") && form.password.length >= 6 && form.password === form.confirmPassword;
     return true;
   };
 
@@ -54,15 +55,16 @@ export default function Onboarding() {
           state: form.state,
           population: parseInt(form.population),
           fiscalYear: form.fiscalYear,
-          contactEmail: form.contactEmail || undefined,
+          contactEmail: form.contactEmail || form.adminEmail,
           contactPhone: form.contactPhone || undefined,
           website: form.website || undefined,
+          adminEmail: form.adminEmail,
           password: form.password,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Setup failed");
-      setCreatedSlug(data.municipality.slug);
+      setCreatedSlug(data.municipality?.slug || "");
       setStep(3);
     } catch (err: any) {
       toast({ title: "Setup failed", description: err.message, variant: "destructive" });
@@ -189,10 +191,21 @@ export default function Onboarding() {
             <CardHeader>
               <CardTitle className="text-base">Create Admin Account</CardTitle>
               <CardDescription>
-                This password protects your data upload tools. Share it only with authorized finance staff.
+                Your admin email and password are used to sign in to the admin portal.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Admin Email *</label>
+                <Input
+                  type="email"
+                  placeholder="finance@yourmunicipality.gov"
+                  value={form.adminEmail}
+                  onChange={e => set("adminEmail", e.target.value)}
+                  autoComplete="email"
+                  data-testid="input-admin-email"
+                />
+              </div>
               <div>
                 <label className="text-sm font-medium mb-1.5 block">Admin Password *</label>
                 <Input
@@ -218,41 +231,39 @@ export default function Onboarding() {
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
                 <p className="font-medium text-foreground">What happens next:</p>
-                <p>• Your public dashboard will be created immediately</p>
-                <p>• Upload department and revenue data from the Admin panel</p>
-                <p>• Publish each section when you're ready for citizens to see it</p>
+                <p>• Your request will be reviewed by our team (usually within 1 business day)</p>
+                <p>• You'll receive an email when your municipality is approved</p>
+                <p>• Once approved, sign in to the admin portal to upload data</p>
                 <p>• Citizens can browse, comment, and subscribe to updates</p>
               </div>
             </CardContent>
           </>
         )}
 
-        {/* Step 3: Success */}
+        {/* Step 3: Pending approval */}
         {step === 3 && (
           <>
             <CardHeader className="text-center">
-              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30">
-                <CheckCircle2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30">
+                <CheckCircle2 className="h-8 w-8 text-amber-600 dark:text-amber-400" />
               </div>
-              <CardTitle className="text-base">Your dashboard is ready!</CardTitle>
+              <CardTitle className="text-base">Request submitted!</CardTitle>
               <CardDescription>
-                {form.name}, {form.state} has been set up. Upload your budget data and publish it to citizens.
+                Your registration for {form.name}, {form.state} is under review.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                <p className="font-medium">Your unique dashboard URL:</p>
-                <code className="text-xs bg-background border rounded px-2 py-1 block break-all">
-                  {typeof window !== "undefined" ? `${window.location.origin}/?tenant=${createdSlug}#/` : ""}
-                </code>
-                <p className="text-xs text-muted-foreground">Share this link on your town website or with residents.</p>
+              <div className="bg-muted/50 rounded-lg p-4 text-sm space-y-2">
+                <p className="font-medium text-foreground">What happens next</p>
+                <ul className="text-xs text-muted-foreground space-y-1.5">
+                  <li>• Our platform team will review your request, usually within 1 business day.</li>
+                  <li>• Once approved, you can sign in at the admin portal using <span className="font-mono text-foreground">{form.adminEmail}</span>.</li>
+                  <li>• You'll be able to upload budget data and publish it to citizens.</li>
+                </ul>
               </div>
-              <div className="flex flex-col gap-2">
-                <Button onClick={goToDashboard} className="w-full" data-testid="btn-go-dashboard">
-                  <Eye className="h-4 w-4 mr-2" />
-                  Go to My Dashboard
-                </Button>
-              </div>
+              <p className="text-xs text-center text-muted-foreground">
+                Questions? Email <a href="mailto:support@civicbudget.gov" className="underline">support@civicbudget.gov</a>
+              </p>
             </CardContent>
           </>
         )}

@@ -27,16 +27,9 @@ import {
   BookOpen,
 } from "lucide-react";
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { getDeptColor } from "@/lib/chart-colors";
 
-const DEPT_COLORS: Record<string, string> = {
-  "Education": "hsl(195, 70%, 34%)",
-  "Public Safety": "hsl(24, 70%, 50%)",
-  "Public Works": "hsl(160, 45%, 38%)",
-  "Parks & Recreation": "hsl(120, 40%, 42%)",
-  "Administration": "hsl(220, 35%, 50%)",
-  "Social Services": "hsl(340, 50%, 45%)",
-  "Library": "hsl(45, 80%, 48%)",
-};
+// Colors imported from shared utility — deterministic, no fallbacks
 
 const DEPT_ICONS: Record<string, React.ReactNode> = {
   "Education": <GraduationCap className="h-4 w-4" />,
@@ -136,7 +129,7 @@ function DollarBreakdown({ data, municipalityName }: { data: { name: string; bud
                   animationDuration={800}
                 >
                   {pieData.map((entry, i) => (
-                    <Cell key={i} fill={DEPT_COLORS[entry.name] || `hsl(${i * 50}, 40%, 50%)`} />
+                    <Cell key={i} fill={getDeptColor(entry.name)} />
                   ))}
                 </Pie>
                 <RechartsTooltip
@@ -157,7 +150,7 @@ function DollarBreakdown({ data, municipalityName }: { data: { name: string; bud
               <div key={d.name} className="flex items-center gap-3">
                 <div
                   className="w-3 h-3 rounded-sm shrink-0"
-                  style={{ backgroundColor: DEPT_COLORS[d.name] || "#888" }}
+                  style={{ backgroundColor: getDeptColor(d.name) }}
                 />
                 <div className="flex items-center gap-1.5 text-muted-foreground">
                   {DEPT_ICONS[d.name]}
@@ -280,7 +273,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 mb-2">
                   <div
                     className="w-2.5 h-2.5 rounded-sm"
-                    style={{ backgroundColor: DEPT_COLORS[dept.name] }}
+                    style={{ backgroundColor: getDeptColor(dept.name) }}
                   />
                   <span className="text-sm font-medium">{dept.name}</span>
                 </div>

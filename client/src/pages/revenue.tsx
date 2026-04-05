@@ -8,14 +8,9 @@ import { useRevenue, useYears, formatCurrency } from "@/hooks/use-budget-data";
 import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
+import { getCategoryColor } from "@/lib/chart-colors";
 
-const CATEGORY_COLORS: Record<string, string> = {
-  "Property Taxes": "hsl(195, 70%, 34%)",
-  "State Aid": "hsl(24, 70%, 50%)",
-  "Fees": "hsl(160, 45%, 38%)",
-  "Grants": "hsl(45, 80%, 48%)",
-  "Other": "hsl(220, 35%, 50%)",
-};
+// Colors imported from shared utility
 
 export default function Revenue() {
   const { data: years } = useYears();
@@ -148,12 +143,12 @@ export default function Revenue() {
                 />
                 <Bar dataKey="budgeted" name="budgeted" radius={[0, 4, 4, 0]} barSize={20} opacity={0.3}>
                   {chartData.map((entry) => (
-                    <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] || "#888"} />
+                    <Cell key={entry.name} fill={getCategoryColor(entry.name)} />
                   ))}
                 </Bar>
                 <Bar dataKey="collected" name="collected" radius={[0, 4, 4, 0]} barSize={20}>
                   {chartData.map((entry) => (
-                    <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] || "#888"} />
+                    <Cell key={entry.name} fill={getCategoryColor(entry.name)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -189,7 +184,7 @@ export default function Revenue() {
                 >
                   <div
                     className="w-3 h-3 rounded-sm shrink-0"
-                    style={{ backgroundColor: CATEGORY_COLORS[category] }}
+                    style={{ backgroundColor: getCategoryColor(category) }}
                   />
                   {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
                   <span className="font-medium flex-1">{category}</span>

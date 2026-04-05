@@ -10,16 +10,9 @@ import { useDepartments, useYears, useSummary, formatCurrency } from "@/hooks/us
 import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight, Shield, GraduationCap, Wrench, TreePine, Building2, Heart, BookOpen } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { getDeptColor } from "@/lib/chart-colors";
 
-const DEPT_COLORS: Record<string, string> = {
-  "Education": "hsl(195, 70%, 34%)",
-  "Public Safety": "hsl(24, 70%, 50%)",
-  "Public Works": "hsl(160, 45%, 38%)",
-  "Parks & Recreation": "hsl(120, 40%, 42%)",
-  "Administration": "hsl(220, 35%, 50%)",
-  "Social Services": "hsl(340, 50%, 45%)",
-  "Library": "hsl(45, 80%, 48%)",
-};
+// Colors imported from shared utility
 
 const DEPT_ICONS: Record<string, React.ReactNode> = {
   "Education": <GraduationCap className="h-4 w-4" />,
@@ -134,7 +127,7 @@ export default function Spending() {
                     {pieData.map((entry) => (
                       <Cell
                         key={entry.name}
-                        fill={DEPT_COLORS[entry.name] || "#888"}
+                        fill={getDeptColor(entry.name)}
                         opacity={expandedDept && expandedDept !== entry.name ? 0.3 : 1}
                         cursor="pointer"
                         onClick={() => setExpandedDept(expandedDept === entry.name ? null : entry.name)}
@@ -177,7 +170,7 @@ export default function Spending() {
                     >
                       <div
                         className="w-3 h-3 rounded-sm shrink-0"
-                        style={{ backgroundColor: DEPT_COLORS[dept.name] }}
+                        style={{ backgroundColor: getDeptColor(dept.name) }}
                       />
                       <div className="flex items-center gap-1.5 text-muted-foreground shrink-0">
                         {DEPT_ICONS[dept.name]}
