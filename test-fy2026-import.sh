@@ -14,7 +14,7 @@ echo "Target: $BASE_URL  Tenant: $TENANT"
 
 # 1. Authenticate
 echo -e "\n[1] Authenticating..."
-TOKEN=$(curl -sf "$BASE_URL/api/login?tenant=$TENANT" \
+TOKEN=$(curl -sf "$BASE_URL/api/auth/login?tenant=$TENANT" \
   -H "Content-Type: application/json" \
   -d "{\"password\":\"$PASSWORD\"}" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 [ -z "$TOKEN" ] && { echo "FAIL: login returned no token"; exit 1; }
