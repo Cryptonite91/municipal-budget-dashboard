@@ -46,6 +46,31 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+/**
+ * RFC-4180-aware CSV line splitter. Handles quoted fields, commas inside
+ * quotes, and escaped double-quotes. Returns trimmed, unquoted strings.
+ */
+function splitCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } // escaped quote
+        else inQuote = false;                           // end of quoted field
+      } else { cur += ch; }
+    } else {
+      if (ch === '"') { inQuote = true; }
+      else if (ch === ',') { fields.push(cur.trim()); cur = ""; }
+      else { cur += ch; }
+    }
+  }
+  fields.push(cur.trim());
+  return fields;
+}
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   await runMigrations();
   await seedDatabase();
@@ -461,14 +486,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const ws = wb.Sheets[wb.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: "" });
       } else {
-        // CSV text
+        // CSV text — use proper RFC-4180 splitter to handle quoted fields
         const lines = data.split("\n").filter((l: string) => l.trim());
-        const headers = lines[0].split(",").map((h: string) => h.trim());
+        const headers = splitCsvLine(lines[0]);
         for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(",").map((c: string) => c.trim());
+          const cols = splitCsvLine(lines[i]);
           if (cols.length >= 2) {
             const row: Record<string, string> = {};
-            headers.forEach((h: string, idx: number) => { row[h] = cols[idx] || ""; });
+            headers.forEach((h: string, idx: number) => { row[h] = cols[idx] ?? ""; });
             rows.push(row);
           }
         }
@@ -572,12 +597,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: "" });
         if (rows.length > 0) headers = Object.keys(rows[0]);
       } else {
+        // Parse ALL rows (no artificial cap) using a proper CSV splitter that
+        // handles quoted fields containing commas or embedded quotes.
         const lines = data.split("\n").filter((l: string) => l.trim());
-        headers = lines[0].split(",").map((h: string) => h.trim());
-        for (let i = 1; i < Math.min(lines.length, 6); i++) {
-          const cols = lines[i].split(",").map((c: string) => c.trim());
+        headers = splitCsvLine(lines[0]);
+        for (let i = 1; i < lines.length; i++) {
+          const cols = splitCsvLine(lines[i]);
           const row: Record<string, string> = {};
-          headers.forEach((h, idx) => { row[h] = cols[idx] || ""; });
+          headers.forEach((h, idx) => { row[h] = cols[idx] ?? ""; });
           rows.push(row);
         }
       }
