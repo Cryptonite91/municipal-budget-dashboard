@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -14,7 +15,7 @@ import {
   Upload, FileText, CheckCircle2, AlertCircle, Lock, LogOut, ShieldCheck,
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
   ChevronUp, FileSpreadsheet, Table, ArrowRight, Users, Globe,
-  Sparkles, Loader2, AlertTriangle, Info, X,
+  Sparkles, Loader2, AlertTriangle, Info, X, Building2, UserCircle2, Clock,
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
@@ -1200,9 +1201,108 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
 }
 
 // ─── Admin dashboard ──────────────────────────────────────────────────────────
+// ── Municipality row with expandable admin accounts ──────────────────────────
+function MuniRow({ m, token, onApprove }: { m: any; token: string | null; onApprove?: (id: number, status: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const { data: admins, isLoading } = useQuery({
+    queryKey: ["/api/admin/municipalities", m.id, "admins"],
+    queryFn: () =>
+      fetch(`${API_BASE}/api/admin/municipalities/${m.id}/admins`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() : []),
+    enabled: !!token && open,
+  });
+
+  const statusColor = m.approvalStatus === "approved"
+    ? "text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-950 dark:border-emerald-800"
+    : m.approvalStatus === "rejected"
+    ? "text-destructive bg-destructive/10 border-destructive/20"
+    : "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-950 dark:border-amber-800";
+
+  return (
+    <div className="border rounded-lg overflow-hidden" data-testid={`card-muni-${m.id}`}>
+      <button
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors"
+        onClick={() => setOpen(v => !v)}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium truncate">{m.name}, {m.state}</p>
+            <p className="text-xs text-muted-foreground">
+              Pop. {m.population?.toLocaleString() ?? "—"}
+              {m.contactEmail ? ` · ${m.contactEmail}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${statusColor}`}>
+            {m.approvalStatus ?? "approved"}
+          </span>
+          {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t bg-muted/20 px-3 pb-3 pt-2 space-y-3">
+          {/* Details row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-muted-foreground">
+            <span><span className="font-medium text-foreground">Slug:</span> {m.slug}</span>
+            <span><span className="font-medium text-foreground">Listed:</span> {m.listed ? "Yes" : "No"}</span>
+            <span><span className="font-medium text-foreground">ID:</span> {m.id}</span>
+            {m.website && <span className="col-span-2 sm:col-span-3"><span className="font-medium text-foreground">Website:</span> {m.website}</span>}
+          </div>
+
+          {/* Admin accounts */}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <UserCircle2 className="h-3.5 w-3.5" /> Admin accounts
+            </p>
+            {isLoading ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : admins && admins.length > 0 ? (
+              <div className="space-y-1">
+                {admins.map((a: any) => (
+                  <div key={a.id} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono bg-muted rounded px-1.5 py-0.5">{a.email}</span>
+                    <Badge variant="outline" className="text-[10px] py-0 h-4">{a.role}</Badge>
+                    {a.createdAt && (
+                      <span className="text-muted-foreground flex items-center gap-0.5">
+                        <Clock className="h-3 w-3" />
+                        {new Date(a.createdAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No admin accounts</p>
+            )}
+          </div>
+
+          {/* Pending approval actions */}
+          {onApprove && m.approvalStatus === "pending" && (
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" variant="outline" className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => onApprove(m.id, "rejected")} data-testid={`btn-reject-${m.id}`}>
+                Reject
+              </Button>
+              <Button size="sm" className="h-7 text-xs"
+                onClick={() => onApprove(m.id, "approved")} data-testid={`btn-approve-${m.id}`}>
+                Approve
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlatformAdminPanel({ token }: { token: string | null }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+
   const pending: any[] = useQuery({
     queryKey: ["/api/admin/pending-municipalities"],
     queryFn: () => fetch(`${API_BASE}/api/admin/pending-municipalities`, {
@@ -1210,6 +1310,14 @@ function PlatformAdminPanel({ token }: { token: string | null }) {
     }).then(r => r.ok ? r.json() : []),
     enabled: !!token,
   }).data ?? [];
+
+  const { data: allMunis = [], isLoading: loadingAll } = useQuery({
+    queryKey: ["/api/admin/municipalities"],
+    queryFn: () => fetch(`${API_BASE}/api/admin/municipalities`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.ok ? r.json() : []),
+    enabled: !!token,
+  });
 
   const approve = async (id: number, status: string) => {
     await fetch(`${API_BASE}/api/admin/municipalities/${id}/approval`, {
@@ -1219,38 +1327,65 @@ function PlatformAdminPanel({ token }: { token: string | null }) {
     });
     toast({ title: status === "approved" ? "Municipality approved" : "Municipality rejected" });
     qc.invalidateQueries({ queryKey: ["/api/admin/pending-municipalities"] });
+    qc.invalidateQueries({ queryKey: ["/api/admin/municipalities"] });
   };
 
-  if (pending.length === 0) return null;
   return (
-    <Card data-testid="card-platform-pending">
+    <Card data-testid="card-platform-admin">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          Pending Approval Requests
-          <Badge variant="destructive" className="ml-1 text-xs">{pending.length}</Badge>
+          Platform Administration
+          {pending.length > 0 && (
+            <Badge variant="destructive" className="ml-1 text-xs">{pending.length} pending</Badge>
+          )}
         </CardTitle>
-        <CardDescription>Review new municipality registration requests.</CardDescription>
+        <CardDescription>Manage all municipalities and admin accounts on the platform.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {pending.map((m: any) => (
-          <div key={m.id} className="flex items-center justify-between p-3 bg-muted/40 rounded-lg">
-            <div>
-              <p className="text-sm font-medium">{m.name}, {m.state}</p>
-              <p className="text-xs text-muted-foreground">Pop. {m.population?.toLocaleString()} · {m.contactEmail || "No email"}</p>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                onClick={() => approve(m.id, "rejected")} data-testid={`btn-reject-${m.id}`}>
-                Reject
-              </Button>
-              <Button size="sm" className="h-7 text-xs"
-                onClick={() => approve(m.id, "approved")} data-testid={`btn-approve-${m.id}`}>
-                Approve
-              </Button>
-            </div>
-          </div>
-        ))}
+      <CardContent>
+        <Tabs defaultValue={pending.length > 0 ? "pending" : "all"}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="all" className="gap-1.5">
+              <Globe className="h-3.5 w-3.5" />
+              All Municipalities
+              <Badge variant="secondary" className="text-[10px] py-0 h-4 ml-0.5">{allMunis.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="pending" className="gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
+              Pending Approval
+              {pending.length > 0 && (
+                <Badge variant="destructive" className="text-[10px] py-0 h-4 ml-0.5">{pending.length}</Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="all" className="space-y-2 mt-0">
+            {loadingAll ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading municipalities…
+              </div>
+            ) : allMunis.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No municipalities yet.</p>
+            ) : (
+              allMunis.map((m: any) => (
+                <MuniRow key={m.id} m={m} token={token} onApprove={approve} />
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="pending" className="space-y-2 mt-0">
+            {pending.length === 0 ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                No pending requests — all caught up.
+              </div>
+            ) : (
+              pending.map((m: any) => (
+                <MuniRow key={m.id} m={m} token={token} onApprove={approve} />
+              ))
+            )}
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );
@@ -1284,6 +1419,9 @@ function AdminDashboard() {
           </Button>
         </div>
       </div>
+
+      {/* Platform admin panel — shown immediately after header */}
+      {isplatform && <PlatformAdminPanel token={token} />}
 
       {/* Publish toggles */}
       {muni && (
@@ -1325,8 +1463,7 @@ function AdminDashboard() {
       {/* Engagement */}
       <EngagementPanel token={token} slug={slug} />
 
-      {/* Platform admin: pending approvals */}
-      {isplatform && <PlatformAdminPanel token={token} />}
+      {/* (platform panel rendered at top) */}
     </div>
   );
 }

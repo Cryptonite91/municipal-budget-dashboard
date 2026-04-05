@@ -238,6 +238,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/municipalities/:id/admins", requirePlatformAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const users = await storage.getAdminUsersByMunicipality(id);
+      // Strip password hashes before returning
+      res.json(users.map(({ passwordHash: _h, ...u }) => u));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Public municipality directory ─────────────────────────────────────────
   app.get("/api/municipalities", async (req, res) => {
     const listed = await storage.getListedMunicipalities();
