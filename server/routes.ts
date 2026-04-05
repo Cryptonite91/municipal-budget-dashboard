@@ -208,7 +208,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Revenue ───────────────────────────────────────────────────────────────
   app.get("/api/revenue/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const sources = await storage.getRevenueSources(muni.id, req.params.year as string);
+    const sources = await storage.getRevenueSources(muni.id, (req.params.year as string).replace(/^FY/i, ""));
     res.json(sources);
   });
 
@@ -221,7 +221,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Departments ───────────────────────────────────────────────────────────
   app.get("/api/departments/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const budgets = await storage.getDepartmentBudgets(muni.id, req.params.year as string);
+    const budgets = await storage.getDepartmentBudgets(muni.id, (req.params.year as string).replace(/^FY/i, ""));
     res.json(budgets);
   });
 
@@ -417,7 +417,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Dashboard summary ─────────────────────────────────────────────────────
   app.get("/api/summary/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const year = req.params.year as string;
+    const year = (req.params.year as string).replace(/^FY/i, "");
     const [deptBudgets, revSources, years] = await Promise.all([
       storage.getDepartmentBudgets(muni.id, year),
       storage.getRevenueSources(muni.id, year),
@@ -472,7 +472,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/upload", resolveTenant, requireAuth, async (req, res) => {
     try {
       const muni = res.locals.muni as Municipality;
-      const { data, type, year, format = "csv", columnMap, aiReviewLog } = req.body;
+      const { data, type, format = "csv", columnMap, aiReviewLog } = req.body;
+      const rawYear: string = req.body.year ?? "";
+      // Normalise year: strip leading "FY" so "FY2026" → "2026" (matches existing DB rows)
+      const year: string = rawYear.replace(/^FY/i, "");
       if (!data || !type || !year) {
         return res.status(400).json({ error: "Missing data, type, or year" });
       }
