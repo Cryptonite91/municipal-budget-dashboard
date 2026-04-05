@@ -289,7 +289,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const [uploadYear, setUploadYear] = useState("FY2026");
   const [rawData, setRawData] = useState("");
   const [fileFormat, setFileFormat] = useState("csv");
-  const [preview, setPreview] = useState<{ headers: string[]; rows: Record<string, string>[]; totalRows: number } | null>(null);
+  const [preview, setPreview] = useState<{ headers: string[]; preview: Record<string, string>[]; rows?: Record<string, string>[]; totalRows: number } | null>(null);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -828,7 +828,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
                   <tr>{preview.headers.map(h => <th key={h} className="px-2 py-1.5 text-left font-medium text-muted-foreground">{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {preview.rows.slice(0,3).map((row, i) => (
+                  {(preview.preview ?? preview.rows ?? []).slice(0,3).map((row, i) => (
                     <tr key={i} className="border-t">
                       {preview.headers.map(h => <td key={h} className="px-2 py-1.5 truncate max-w-[120px]">{row[h]}</td>)}
                     </tr>
