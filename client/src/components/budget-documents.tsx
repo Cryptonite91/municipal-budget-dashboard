@@ -504,7 +504,7 @@ export function AdminDocumentsCard({
 
 // ─── Public Budget Documents Section ─────────────────────────────────────────
 
-export function PublicBudgetDocuments({ slug }: { slug: string }) {
+export function PublicBudgetDocuments({ slug, activeYear }: { slug: string; activeYear?: string }) {
   const { data: docs = [], isLoading } = useQuery<BudgetDocument[]>({
     queryKey: tKey("/api/documents/public", slug),
     queryFn: async () => {
@@ -517,8 +517,15 @@ export function PublicBudgetDocuments({ slug }: { slug: string }) {
 
   if (isLoading || docs.length === 0) return null;
 
+  // Filter to docs matching the selected year (plus "General" / untagged docs)
+  const filtered = activeYear
+    ? docs.filter(d => !d.year || d.year === activeYear)
+    : docs;
+
+  if (filtered.length === 0) return null;
+
   // Group by year
-  const byYear = docs.reduce<Record<string, BudgetDocument[]>>((acc, doc) => {
+  const byYear = filtered.reduce<Record<string, BudgetDocument[]>>((acc, doc) => {
     const key = doc.year || "General";
     if (!acc[key]) acc[key] = [];
     acc[key].push(doc);

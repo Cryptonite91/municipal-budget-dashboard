@@ -289,7 +289,7 @@ export default function Dashboard() {
       <DollarBreakdown data={summary.departments} municipalityName={summary.municipalityName} />
 
       {/* Public Budget Documents */}
-      <PublicBudgetDocuments slug={slug} />
+      <PublicBudgetDocuments slug={slug} activeYear={activeYear} />
 
       <CitizenEngagement section="overview" />
     </div>

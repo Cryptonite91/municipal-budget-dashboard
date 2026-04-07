@@ -170,6 +170,18 @@ export const insertFieldOptionSchema = createInsertSchema(fieldOptions).omit({ i
 export type InsertFieldOption = z.infer<typeof insertFieldOptionSchema>;
 export type FieldOption = typeof fieldOptions.$inferSelect;
 
+// ─── Population figures (one per year per municipality) ─────────────────────────
+export const populationFigures = sqliteTable("population_figures", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id").notNull(),
+  year: text("year").notNull(),          // plain 4-digit year
+  population: integer("population").notNull(),
+});
+
+export const insertPopulationFigureSchema = createInsertSchema(populationFigures).omit({ id: true });
+export type InsertPopulationFigure = z.infer<typeof insertPopulationFigureSchema>;
+export type PopulationFigure = typeof populationFigures.$inferSelect;
+
 // ─── Budget documents ───────────────────────────────────────────────────────────────
 export const budgetDocuments = sqliteTable("budget_documents", {
   id: integer("id").primaryKey({ autoIncrement: true }),

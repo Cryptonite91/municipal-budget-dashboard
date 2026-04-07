@@ -288,6 +288,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(safe);
   });
 
+  // ── Population figures (year-tagged) ──────────────────────────────────────
+  app.get("/api/population", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const figures = await storage.getPopulationFigures(muni.id);
+    res.json(figures);
+  });
+
+  app.post("/api/population", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { year, population } = req.body;
+      if (!year || !population || isNaN(parseInt(population))) {
+        return res.status(400).json({ error: "year and population (number) required" });
+      }
+      const fig = await storage.upsertPopulationFigure(muni.id, normalizeYear(year), parseInt(population));
+      // Keep the legacy municipalities.population in sync with the latest figure
+      const figures = await storage.getPopulationFigures(muni.id);
+      if (figures.length > 0) {
+        await storage.updateMunicipality(muni.id, { population: figures[0].population });
+      }
+      res.json(fig);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/population/:id", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "invalid id" });
+      await storage.deletePopulationFigure(id, muni.id);
+      // Sync legacy field
+      const figures = await storage.getPopulationFigures(muni.id);
+      await storage.updateMunicipality(muni.id, { population: figures.length > 0 ? figures[0].population : 0 });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Publish toggles ───────────────────────────────────────────────────────
   app.post("/api/publish", resolveTenant, requireAuth, async (req, res) => {
     const muni = res.locals.muni as Municipality;
@@ -594,10 +635,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/summary/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
     const year = normalizeYear(req.params.year);
-    const [deptBudgets, revSources, years] = await Promise.all([
+    const [deptBudgets, revSources, years, yearPopulation] = await Promise.all([
       storage.getDepartmentBudgets(muni.id, year),
       storage.getRevenueSources(muni.id, year),
       storage.getAvailableYears(muni.id),
+      storage.getPopulationForYear(muni.id, year),
     ]);
 
     const totalBudgeted = deptBudgets.reduce((s, d) => s + d.budgetedAmount, 0);
@@ -630,11 +672,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       yoyChange: priorYearTotal > 0 ? ((totalBudgeted - priorYearTotal) / priorYearTotal) * 100 : 0,
       percentSpent: totalBudgeted > 0 ? (totalSpent / totalBudgeted) * 100 : 0,
       budgetReserve: totalBudgeted > 0 ? ((totalBudgeted - totalSpent) / totalBudgeted) * 100 : 0,
-      costPerResident: muni.population > 0 ? totalBudgeted / muni.population : 0,
+      costPerResident: yearPopulation > 0 ? totalBudgeted / yearPopulation : 0,
       revenueEfficiency: totalRevenueBudgeted > 0 ? (totalRevenueCollected / totalRevenueBudgeted) * 100 : 0,
       departments,
       topDepartments: departments.slice(0, 3).map(d => d.name),
-      population: muni.population,
+      population: yearPopulation,
       municipalityName: muni.name,
       publishStatus: {
         revenue: muni.revenuePublished,
@@ -649,6 +691,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const muni = res.locals.muni as Municipality;
       const { data, type, format = "csv", columnMap, aiReviewLog } = req.body;
+      const importMode: "append" | "overwrite" = req.body.importMode === "overwrite" ? "overwrite" : "append";
       const year: string = normalizeYear(req.body.year ?? "");
       if (!data || !type || !year) {
         return res.status(400).json({ error: "Missing data, type, or year" });
@@ -695,7 +738,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const foMap = await storage.getFieldOptionsMap(muni.id);
 
       if (type === "departments") {
-        await storage.clearDepartmentBudgetsByYear(muni.id, year);
+        if (importMode === "overwrite") await storage.clearDepartmentBudgetsByYear(muni.id, year);
         for (const row of rows) {
           const rawDept = col(row, "department", ["department", "dept"]);
           const rawCat = col(row, "category", ["category", "sub-category", "subcategory", "line item"]);
@@ -714,7 +757,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
         }
       } else if (type === "revenue") {
-        await storage.clearRevenueSourcesByYear(muni.id, year);
+        if (importMode === "overwrite") await storage.clearRevenueSourcesByYear(muni.id, year);
         for (const row of rows) {
           const rawSource = col(row, "source", ["source", "revenue source", "name"]);
           const rawCat = col(row, "category", ["category", "type", "revenue type"]);
@@ -733,7 +776,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
         }
       } else if (type === "projects") {
-        await storage.clearCapitalProjects(muni.id);
+        if (importMode === "overwrite") await storage.clearCapitalProjects(muni.id);
         for (const row of rows) {
           const name = col(row, "name", ["name", "project", "project name"]);
           const department = col(row, "department", ["department", "dept"]);
@@ -758,9 +801,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         uploadedAt: new Date().toISOString(),
         recordCount,
         status: "success",
-        notes: aiReviewLog
-          ? `Imported ${recordCount} ${type} records for ${year} [AI-assisted]`
-          : `Imported ${recordCount} ${type} records for ${year}`,
+        notes: `${importMode === "overwrite" ? "Replaced" : "Appended"} ${recordCount} ${type} records for ${year}${aiReviewLog ? " [AI-assisted]" : ""}`,
         dataType: type,
         year,
       });

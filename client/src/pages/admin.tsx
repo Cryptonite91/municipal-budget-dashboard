@@ -15,7 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useTenantSlug } from "@/hooks/use-tenant";
 import { tKey, useMunicipality } from "@/hooks/use-budget-data";
-import type { UploadHistory, CitizenComment, EmailSubscriber, FieldOption } from "@shared/schema";
+import type { UploadHistory, CitizenComment, EmailSubscriber, FieldOption, PopulationFigure } from "@shared/schema";
 import {
   Upload, FileText, CheckCircle2, AlertCircle, Lock, LogOut, ShieldCheck,
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
@@ -372,6 +372,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showSample, setShowSample] = useState(false);
+  const [importMode, setImportMode] = useState<"append" | "overwrite">("append");
   const [inputMode, setInputMode] = useState<"chat" | "csv">("csv");
 
   // ── Field options for dropdowns ────────────────────────────────────
@@ -656,7 +657,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
     try {
       const res = await authFetch(`/api/upload?tenant=${slug}`, token, {
         method: "POST",
-        body: JSON.stringify({ data: rawData, type: uploadType, year: uploadYear, format: fileFormat, columnMap }),
+        body: JSON.stringify({ data: rawData, type: uploadType, year: uploadYear, format: fileFormat, columnMap, importMode }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
       const d = await res.json();
@@ -1038,13 +1039,30 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
               <div className="flex justify-between"><span className="text-muted-foreground">Year</span><span className="font-medium">{uploadYear}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Rows to import</span><span className="font-medium">{preview.totalRows}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Columns mapped</span><span className="font-medium">{Object.keys(columnMap).length} / {REQUIRED_COLS[uploadType].length}</span></div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Import mode</span>
+                <div className="flex gap-1 p-0.5 bg-muted rounded-md">
+                  <button
+                    onClick={() => setImportMode("append")}
+                    className={`text-xs py-1 px-2.5 rounded font-medium transition-colors ${importMode === "append" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    data-testid="btn-mode-append"
+                  >Append</button>
+                  <button
+                    onClick={() => setImportMode("overwrite")}
+                    className={`text-xs py-1 px-2.5 rounded font-medium transition-colors ${importMode === "overwrite" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    data-testid="btn-mode-overwrite"
+                  >Overwrite</button>
+                </div>
+              </div>
             </div>
-            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 text-xs text-amber-800 dark:text-amber-300">
-              This will replace all existing {TYPE_LABELS[uploadType]} data for {uploadYear}. This cannot be undone.
+            <div className={`rounded-md p-3 text-xs ${importMode === "overwrite" ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300" : "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300"}`}>
+              {importMode === "overwrite"
+                ? `This will replace all existing ${TYPE_LABELS[uploadType]} data for ${uploadYear}. This cannot be undone.`
+                : `New records will be added to existing ${TYPE_LABELS[uploadType]} data for ${uploadYear}.`}
             </div>
             <Button onClick={handleImport} disabled={isUploading} className="w-full" data-testid="btn-import">
               <Upload className="h-4 w-4 mr-2" />
-              {isUploading ? "Importing…" : `Import ${preview.totalRows} Records`}
+              {isUploading ? "Importing…" : `${importMode === "overwrite" ? "Replace &" : ""} Import ${preview.totalRows} Records`}
             </Button>
           </div>
         )}
@@ -1313,43 +1331,47 @@ function YearManagementPanel({ token, slug }: { token: string | null; slug: stri
   );
 }
 
-// ── Population Panel ──────────────────────────────────────────────────────────────
+// ── Population Panel (year-tagged figures) ─────────────────────────────────────────
 function PopulationPanel({ token, slug }: { token: string | null; slug: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data: muni } = useMunicipality();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
+  const { data: figures = [] } = useQuery<PopulationFigure[]>({
+    queryKey: tKey("/api/population", slug),
+    queryFn: () => authFetch(`/api/population?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+  });
+  const [addYear, setAddYear] = useState("");
+  const [addPop, setAddPop] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const startEdit = () => {
-    setValue(muni?.population ? String(muni.population) : "");
-    setEditing(true);
-  };
-
   const save = async () => {
-    const pop = parseInt(value.replace(/[^\d]/g, ""), 10);
-    if (isNaN(pop) || pop <= 0) {
-      toast({ title: "Invalid population", description: "Enter a whole number greater than 0.", variant: "destructive" });
-      return;
-    }
+    const yr = normalizeYear(addYear);
+    const pop = parseInt(addPop.replace(/[^\d]/g, ""), 10);
+    if (!yr || yr.length !== 4) { toast({ title: "Enter a valid 4-digit year", variant: "destructive" }); return; }
+    if (isNaN(pop) || pop <= 0) { toast({ title: "Enter a valid population", variant: "destructive" }); return; }
     setSaving(true);
     try {
-      const r = await authFetch(`/api/municipality?tenant=${slug}`, token, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ population: pop }),
+      const r = await authFetch(`/api/population?tenant=${slug}`, token, {
+        method: "POST",
+        body: JSON.stringify({ year: yr, population: pop }),
       });
       if (!r.ok) throw new Error((await r.json()).error ?? "Save failed");
-      toast({ title: "Population updated" });
-      qc.invalidateQueries({ queryKey: tKey("/api/municipality", slug) });
+      toast({ title: `Population for ${yr} saved` });
+      qc.invalidateQueries({ queryKey: tKey("/api/population", slug) });
       qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
-      setEditing(false);
+      qc.invalidateQueries({ queryKey: tKey("/api/municipality", slug) });
+      setAddYear(""); setAddPop("");
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (id: number) => {
+    try {
+      await authFetch(`/api/population/${id}?tenant=${slug}`, token, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: tKey("/api/population", slug) });
+      qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
+      qc.invalidateQueries({ queryKey: tKey("/api/municipality", slug) });
+    } catch {}
   };
 
   return (
@@ -1359,36 +1381,50 @@ function PopulationPanel({ token, slug }: { token: string | null; slug: string }
           <Users className="h-4 w-4 text-muted-foreground" />
           Population
         </CardTitle>
-        <CardDescription>Used to calculate Cost per Resident on the Overview tab.</CardDescription>
+        <CardDescription>One figure per year. The Overview tab uses the matching year's figure (or latest available).</CardDescription>
       </CardHeader>
-      <CardContent>
-        {editing ? (
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              min={1}
-              className="h-8 w-40 text-sm"
-              value={value}
-              onChange={e => setValue(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-              autoFocus
-              data-testid="input-population"
-            />
-            <Button size="sm" className="h-8" onClick={save} disabled={saving} data-testid="btn-save-population">
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Save className="h-3.5 w-3.5 mr-1.5" />Save</>}
-            </Button>
-            <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <span className="text-sm tabular-nums" data-testid="text-population">
-              {muni?.population ? muni.population.toLocaleString() : <span className="text-muted-foreground italic">Not set</span>}
-            </span>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startEdit} data-testid="btn-edit-population">
-              <Pencil className="h-3 w-3 mr-1.5" />Edit
-            </Button>
+      <CardContent className="space-y-3">
+        {/* Existing entries */}
+        {figures.length > 0 && (
+          <div className="divide-y rounded-lg border text-sm">
+            {figures.map(f => (
+              <div key={f.id} className="flex items-center justify-between px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <Badge variant="outline" className="text-xs tabular-nums">{f.year}</Badge>
+                  <span className="tabular-nums">{f.population.toLocaleString()}</span>
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => remove(f.id)} data-testid={`btn-del-pop-${f.id}`}>
+                  <Trash2 className="h-3 w-3 text-muted-foreground" />
+                </Button>
+              </div>
+            ))}
           </div>
         )}
+        {/* Add new */}
+        <div className="flex items-center gap-2">
+          <select
+            className="h-8 w-24 rounded-md border bg-background px-2 text-sm"
+            value={addYear}
+            onChange={e => setAddYear(e.target.value)}
+            data-testid="select-pop-year"
+          >
+            <option value="">Year</option>
+            {SELECTABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <Input
+            type="number"
+            min={1}
+            placeholder="Population"
+            className="h-8 w-36 text-sm"
+            value={addPop}
+            onChange={e => setAddPop(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") save(); }}
+            data-testid="input-population"
+          />
+          <Button size="sm" className="h-8" onClick={save} disabled={saving} data-testid="btn-save-population">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" />Add</>}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

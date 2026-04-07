@@ -133,6 +133,14 @@ const fieldOptionsTable = `CREATE TABLE IF NOT EXISTS field_options (
   is_system INTEGER NOT NULL DEFAULT 0
 )`;
 
+// New table: population_figures (year-tagged population per municipality)
+const populationFiguresTable = `CREATE TABLE IF NOT EXISTS population_figures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  municipality_id INTEGER NOT NULL,
+  year TEXT NOT NULL,
+  population INTEGER NOT NULL
+)`;
+
 // ALTER TABLE migrations for columns added after initial schema
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
@@ -153,6 +161,8 @@ export async function runMigrations() {
   await migrationClient.execute(importBatchRecordsTable);
   // Create field_options table
   await migrationClient.execute(fieldOptionsTable);
+  // Create population_figures table
+  await migrationClient.execute(populationFiguresTable);
   // Run alterations, ignoring "duplicate column" errors (idempotent)
   for (const sql of alterations) {
     try {
@@ -324,5 +334,25 @@ export async function runMigrations() {
       console.warn("[migrate] FY-strip warning:", e.message);
     }
   }
+  // ── Seed population_figures from existing municipalities.population (one-time) ──
+  try {
+    const munis = (await migrationClient.execute(
+      `SELECT id, population, fiscal_year FROM municipalities WHERE population > 0`
+    )).rows as { id: number; population: number; fiscal_year: string }[];
+    for (const m of munis) {
+      const yr = m.fiscal_year || "2026";
+      await migrationClient.execute(
+        `INSERT OR IGNORE INTO population_figures (municipality_id, year, population)
+         SELECT ${m.id}, '${yr}', ${m.population}
+         WHERE NOT EXISTS (
+           SELECT 1 FROM population_figures WHERE municipality_id=${m.id} AND year='${yr}'
+         )`
+      );
+    }
+    console.log("[migrate] Population figures seeded from municipalities table");
+  } catch (e: any) {
+    console.warn("[migrate] population seed warning:", e.message);
+  }
+
   console.log("[migrate] Tables verified/created");
 }

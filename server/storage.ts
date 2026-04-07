@@ -10,10 +10,11 @@ import {
   type BudgetDocument, type InsertBudgetDocument, budgetDocuments,
   type AdminUser, type InsertAdminUser, adminUsers,
   type FieldOption, type InsertFieldOption, fieldOptions,
+  type PopulationFigure, type InsertPopulationFigure, populationFigures,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
@@ -74,6 +75,12 @@ export interface IStorage {
   getAdminUsersByMunicipality(muniId: number): Promise<AdminUser[]>;
   getPendingMunicipalities(): Promise<Municipality[]>;
   approveMunicipality(id: number, status: string): Promise<void>;
+  // Population figures (year-tagged)
+  getPopulationFigures(muniId: number): Promise<PopulationFigure[]>;
+  upsertPopulationFigure(muniId: number, year: string, population: number): Promise<PopulationFigure>;
+  deletePopulationFigure(id: number, muniId: number): Promise<void>;
+  /** Get population for a specific year. Falls back to the latest available figure. */
+  getPopulationForYear(muniId: number, year: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -163,7 +170,9 @@ export class DatabaseStorage implements IStorage {
 
   // ── Upload history ───────────────────────────────────────────────────────────
   async getUploadHistory(muniId: number): Promise<UploadHistory[]> {
-    return db.select().from(uploadHistory).where(eq(uploadHistory.municipalityId, muniId));
+    return db.select().from(uploadHistory)
+      .where(eq(uploadHistory.municipalityId, muniId))
+      .orderBy(desc(uploadHistory.id));
   }
 
   async createUploadHistory(data: InsertUploadHistory): Promise<UploadHistory> {
@@ -380,6 +389,46 @@ export class DatabaseStorage implements IStorage {
     if (!alreadyExists) {
       await this.createFieldOption({ municipalityId: muniId, fieldType, value, isSystem: false });
     }
+  }
+
+  // ── Population figures ───────────────────────────────────────────────────────
+  async getPopulationFigures(muniId: number): Promise<PopulationFigure[]> {
+    return db.select().from(populationFigures)
+      .where(eq(populationFigures.municipalityId, muniId))
+      .orderBy(desc(populationFigures.year));
+  }
+
+  async upsertPopulationFigure(muniId: number, year: string, population: number): Promise<PopulationFigure> {
+    const existing = await db.select().from(populationFigures)
+      .where(and(eq(populationFigures.municipalityId, muniId), eq(populationFigures.year, year)));
+    if (existing.length > 0) {
+      await db.update(populationFigures).set({ population })
+        .where(and(eq(populationFigures.municipalityId, muniId), eq(populationFigures.year, year)));
+      return { ...existing[0], population };
+    }
+    return db.insert(populationFigures).values({ municipalityId: muniId, year, population }).returning().get();
+  }
+
+  async deletePopulationFigure(id: number, muniId: number): Promise<void> {
+    await db.delete(populationFigures)
+      .where(and(eq(populationFigures.id, id), eq(populationFigures.municipalityId, muniId)))
+      .run();
+  }
+
+  async getPopulationForYear(muniId: number, year: string): Promise<number> {
+    // Try exact year match first
+    const exact = await db.select().from(populationFigures)
+      .where(and(eq(populationFigures.municipalityId, muniId), eq(populationFigures.year, year)));
+    if (exact.length > 0) return exact[0].population;
+    // Fall back to latest available figure
+    const latest = await db.select().from(populationFigures)
+      .where(eq(populationFigures.municipalityId, muniId))
+      .orderBy(desc(populationFigures.year))
+      .limit(1);
+    if (latest.length > 0) return latest[0].population;
+    // Final fallback: legacy municipalities.population field
+    const muni = await this.getMunicipalityById(muniId);
+    return muni?.population ?? 0;
   }
 }
 
