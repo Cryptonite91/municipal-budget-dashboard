@@ -196,5 +196,23 @@ export async function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate] admin_user seed warning:", e.message);
   }
+  // ── One-time data fix: strip FY prefix from year columns (idempotent) ──────
+  // Converts "FY2026" → "2026", "FY2025" → "2025", etc. in all data tables.
+  // Safe to run repeatedly: SUBSTR(year, 3) on "2026" produces "26" which
+  // does NOT start with "FY", so the WHERE clause never matches again.
+  const stripFyUpdates = [
+    `UPDATE department_budgets SET year = SUBSTR(year, 3) WHERE year LIKE 'FY%'`,
+    `UPDATE revenue_sources    SET year = SUBSTR(year, 3) WHERE year LIKE 'FY%'`,
+    `UPDATE upload_history     SET year = SUBSTR(year, 3) WHERE year LIKE 'FY%'`,
+    `UPDATE budget_documents   SET year = SUBSTR(year, 3) WHERE year LIKE 'FY%'`,
+    `UPDATE municipalities     SET fiscal_year = SUBSTR(fiscal_year, 3) WHERE fiscal_year LIKE 'FY%'`,
+  ];
+  for (const sql of stripFyUpdates) {
+    try {
+      await migrationClient.execute(sql);
+    } catch (e: any) {
+      console.warn("[migrate] FY-strip warning:", e.message);
+    }
+  }
   console.log("[migrate] Tables verified/created");
 }
