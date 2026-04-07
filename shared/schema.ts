@@ -107,6 +107,7 @@ export const uploadHistory = sqliteTable("upload_history", {
   // Added: makes year-management and history detail possible
   dataType: text("data_type"),  // "departments" | "revenue" | "projects"
   year: text("year"),           // plain 4-digit year, e.g. "2026"
+  uploadedBy: text("uploaded_by"), // admin email who performed the import
 });
 
 export const insertUploadHistorySchema = createInsertSchema(uploadHistory).omit({ id: true });

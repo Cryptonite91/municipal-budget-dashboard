@@ -145,6 +145,7 @@ const populationFiguresTable = `CREATE TABLE IF NOT EXISTS population_figures (
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE budget_documents ADD COLUMN ai_review_log TEXT`,
+  `ALTER TABLE upload_history ADD COLUMN uploaded_by TEXT`,
   `ALTER TABLE municipalities ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'`,
   // Year management + import history detail
   `ALTER TABLE upload_history ADD COLUMN data_type TEXT`,
@@ -334,6 +335,25 @@ export async function runMigrations() {
       console.warn("[migrate] FY-strip warning:", e.message);
     }
   }
+  // ── Backfill uploaded_by on historical import records ────────────────────────
+  try {
+    const blanks = (await migrationClient.execute(
+      `SELECT DISTINCT municipality_id FROM upload_history WHERE uploaded_by IS NULL`
+    )).rows as { municipality_id: number }[];
+    for (const { municipality_id } of blanks) {
+      const admins = (await migrationClient.execute(
+        `SELECT email FROM admin_users WHERE municipality_id = ${municipality_id} LIMIT 1`
+      )).rows as { email: string }[];
+      const fallback = admins.length > 0 ? admins[0].email : "admin";
+      await migrationClient.execute(
+        `UPDATE upload_history SET uploaded_by = '${fallback}' WHERE municipality_id = ${municipality_id} AND uploaded_by IS NULL`
+      );
+    }
+    console.log("[migrate] Backfilled uploaded_by on import history");
+  } catch (e: any) {
+    console.warn("[migrate] uploaded_by backfill warning:", e.message);
+  }
+
   // ── Seed population_figures from existing municipalities.population (one-time) ──
   try {
     const munis = (await migrationClient.execute(

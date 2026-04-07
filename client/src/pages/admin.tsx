@@ -1643,6 +1643,7 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{u.filename}</p>
                   <p className="text-xs text-muted-foreground">{u.notes}</p>
+                  {u.uploadedBy && <p className="text-xs text-muted-foreground/60">by {u.uploadedBy}</p>}
                 </div>
                 <Badge className={u.status === "success" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : ""} variant={u.status === "success" ? "default" : "destructive"}>
                   {u.status === "success" ? <><CheckCircle2 className="h-3 w-3 mr-1" />{u.recordCount} records</> : <><AlertCircle className="h-3 w-3 mr-1" />Error</>}

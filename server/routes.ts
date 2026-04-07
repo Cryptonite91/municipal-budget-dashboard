@@ -795,6 +795,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
+      const session = res.locals.session as SessionInfo | undefined;
       const historyEntry = await storage.createUploadHistory({
         municipalityId: muni.id,
         filename: `${type}_${year}.${format}`,
@@ -804,6 +805,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         notes: `${importMode === "overwrite" ? "Replaced" : "Appended"} ${recordCount} ${type} records for ${year}${aiReviewLog ? " [AI-assisted]" : ""}`,
         dataType: type,
         year,
+        uploadedBy: session?.email || "admin",
       });
       // Persist per-record snapshot for import history detail
       for (const rec of batchSnapshot) {
