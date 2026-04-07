@@ -1163,7 +1163,10 @@ When the admin provides financial data, analyze it and either:
 1. Return proposed import rows (if you have enough data), OR
 2. Ask ONE concise clarifying question (e.g. "This data has both revenue and expenditure sections. Which would you like to import first?")
 
-If no data is provided, answer general app questions concisely (1-4 sentences).
+CRITICAL — after clarification:
+If earlier in this conversation the admin provided data AND asked a clarifying question, and the user has now answered that question (e.g. selected a data type, year, or fund), you MUST immediately return an import_proposal with rows — NEVER reply with "Done.", "OK", or any plain text acknowledgement. Go back to the data in the conversation history and produce the rows right now.
+
+If no data is provided anywhere in the conversation, answer general app questions concisely (1-4 sentences).
 
 RESPONSE FORMAT — valid JSON only, no markdown, no prose:
 
