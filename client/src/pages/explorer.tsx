@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { API_BASE } from "@/lib/api-base";
+import { normalizeYear } from "@/lib/year-utils";
 import {
   MapPin, Search, Users, Building2, ArrowRight,
   ChevronDown, Globe, TrendingUp,
@@ -81,7 +82,7 @@ function MuniCard({ muni }: { muni: PublicMuni }) {
             {muni.fiscalYear && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <TrendingUp className="h-3 w-3" />
-                {muni.fiscalYear}
+                {normalizeYear(muni.fiscalYear)}
               </span>
             )}
           </div>

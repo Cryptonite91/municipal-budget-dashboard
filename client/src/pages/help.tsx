@@ -18,8 +18,8 @@ const glossary = [
     definition: "Money set aside for large, long-term investments like building a new school, replacing a bridge, or purchasing major equipment. These are separate from day-to-day operating costs.",
   },
   {
-    term: "Fiscal Year (FY)",
-    definition: "The 12-month period the town uses for budgeting and financial reporting. Most Vermont municipalities run July 1 through June 30. 'FY2026' means July 2025 through June 2026.",
+    term: "Budget Year",
+    definition: "The 12-month period the town uses for budgeting and financial reporting. Most Vermont municipalities run July 1 through June 30. '2026' refers to the fiscal year ending in 2026 (July 2025 through June 2026).",
   },
   {
     term: "Property Tax (Mill Rate)",

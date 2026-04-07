@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Building2, ChevronRight, ChevronLeft, CheckCircle2, Eye } from "lucide-react";
 import { API_BASE } from "@/lib/api-base";
+import { normalizeYear, SELECTABLE_YEARS } from "@/lib/year-utils";
 
 const STEPS = [
   { id: 1, label: "Municipality Info" },
@@ -27,7 +28,7 @@ export default function Onboarding() {
     name: "",
     state: "",
     population: "",
-    fiscalYear: "FY2026",
+    fiscalYear: "2026",
     contactEmail: "",
     contactPhone: "",
     website: "",
@@ -159,13 +160,13 @@ export default function Onboarding() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">Fiscal Year</label>
+                  <label className="text-sm font-medium mb-1.5 block">Current Year</label>
                   <select
                     className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     value={form.fiscalYear}
-                    onChange={e => set("fiscalYear", e.target.value)}
+                    onChange={e => set("fiscalYear", normalizeYear(e.target.value))}
                   >
-                    {["FY2027", "FY2026", "FY2025", "FY2024"].map(y => <option key={y} value={y}>{y}</option>)}
+                    {SELECTABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                   </select>
                 </div>
                 <div>

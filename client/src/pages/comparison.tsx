@@ -65,7 +65,7 @@ export default function Comparison() {
         <div>
           <h1 className="text-xl font-bold">Budget Comparison</h1>
           <p className="text-sm text-muted-foreground">
-            Compare spending across fiscal years
+            Compare spending across years
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -141,7 +141,7 @@ export default function Comparison() {
                 <Info className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
               </TooltipTrigger>
               <TooltipContent className="max-w-[240px] text-xs">
-                Compare budgeted amounts by department across two fiscal years.
+                Compare budgeted amounts by department across two years.
               </TooltipContent>
             </Tooltip>
           </CardTitle>

@@ -10,6 +10,7 @@ import type { Municipality } from "@shared/schema";
 import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "fs";
 import { join, extname } from "path";
 import pdfParse from "pdf-parse";
+import { normalizeYear } from "./year-utils";
 
 // ─── Auth: per-tenant token sessions ─────────────────────────────────────────
 // Map: token → municipalityId
@@ -177,7 +178,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         name,
         state,
         population: parseInt(population),
-        fiscalYear: fiscalYear || "FY2026",
+        fiscalYear: normalizeYear(fiscalYear) || "2026",
         contactEmail: contactEmail || adminEmail,
         contactPhone: contactPhone || null,
         website: website || null,
@@ -319,7 +320,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.delete("/api/years/:year", resolveTenant, requireAuth, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const year = (req.params.year as string).replace(/^FY/i, "");
+    const year = normalizeYear(req.params.year);
     if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: "Invalid year" });
     try {
       const result = await storage.deleteDataByYear(muni.id, year);
@@ -344,7 +345,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Revenue ───────────────────────────────────────────────────────────────
   app.get("/api/revenue/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const sources = await storage.getRevenueSources(muni.id, (req.params.year as string).replace(/^FY/i, ""));
+    const sources = await storage.getRevenueSources(muni.id, normalizeYear(req.params.year));
     res.json(sources);
   });
 
@@ -357,7 +358,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Departments ───────────────────────────────────────────────────────────
   app.get("/api/departments/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const budgets = await storage.getDepartmentBudgets(muni.id, (req.params.year as string).replace(/^FY/i, ""));
+    const budgets = await storage.getDepartmentBudgets(muni.id, normalizeYear(req.params.year));
     res.json(budgets);
   });
 
@@ -553,7 +554,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Dashboard summary ─────────────────────────────────────────────────────
   app.get("/api/summary/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
-    const year = (req.params.year as string).replace(/^FY/i, "");
+    const year = normalizeYear(req.params.year);
     const [deptBudgets, revSources, years] = await Promise.all([
       storage.getDepartmentBudgets(muni.id, year),
       storage.getRevenueSources(muni.id, year),
@@ -609,11 +610,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const muni = res.locals.muni as Municipality;
       const { data, type, format = "csv", columnMap, aiReviewLog } = req.body;
-      const rawYear: string = req.body.year ?? "";
-      // Normalise year: extract first 4-digit number, e.g.:
-      //   "FY2026" → "2026",  "Fiscal Year 2026" → "2026",  "2026-2027" → "2026"
-      const yearMatch = rawYear.match(/\b(20\d{2})\b/);
-      const year: string = yearMatch ? yearMatch[1] : rawYear.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
+      const year: string = normalizeYear(req.body.year ?? "");
       if (!data || !type || !year) {
         return res.status(400).json({ error: "Missing data, type, or year" });
       }
@@ -903,8 +900,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const m = l.match(FY_RE);
       if (m) {
         for (const hit of m) {
-          const norm = hit.replace(/\s+/g, " ").trim();
-          if (!fiscalYears.includes(norm)) fiscalYears.push(norm);
+          const norm = normalizeYear(hit);
+          if (norm && !fiscalYears.includes(norm)) fiscalYears.push(norm);
         }
       }
     }
@@ -1047,7 +1044,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             const norm = normalizePdfText(rawText);
             pdfContext = [
               norm.documentTitle ? `Document: ${norm.documentTitle}` : `File: ${fileName || "attached PDF"}`,
-              norm.fiscalYears.length ? `Fiscal years detected: ${norm.fiscalYears.join(", ")}` : "",
+              norm.fiscalYears.length ? `Years detected: ${norm.fiscalYears.join(", ")}` : "",
               norm.departmentHeaders.length ? `Departments/funds: ${norm.departmentHeaders.slice(0, 12).join(", ")}` : "",
               norm.candidateCategories.length ? `Line items: ${norm.candidateCategories.slice(0, 16).join(", ")}` : "",
               `\n--- RAW TEXT EXCERPT (first 4000 chars, column headers stripped) ---\n${norm.excerpt.slice(0, 4000)}`,
@@ -1296,7 +1293,7 @@ Never auto-import. Return rows for admin review only.`;
       const structuredContext = [
         normalized.documentTitle ? `Document title: ${normalized.documentTitle}` : "",
         `Pages extracted: ${pageCount || "unknown"}, raw text length: ${rawText.length} chars`,
-        normalized.fiscalYears.length ? `Detected fiscal years: ${normalized.fiscalYears.join(", ")}` : "",
+        normalized.fiscalYears.length ? `Detected years: ${normalized.fiscalYears.join(", ")}` : "",
         normalized.departmentHeaders.length
           ? `Department/fund sections detected (${normalized.departmentHeaders.length}): ${normalized.departmentHeaders.slice(0, 8).join(" | ")}`
           : "",

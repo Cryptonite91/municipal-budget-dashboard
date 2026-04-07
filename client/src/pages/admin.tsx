@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
+import { normalizeYear, SELECTABLE_YEARS } from "@/lib/year-utils";
 import { DataEditor } from "@/components/data-editor";
 import { AdminDocumentsCard } from "@/components/budget-documents";
 
@@ -363,7 +364,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const pdfRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<"choose" | "map" | "confirm">("choose");
   const [uploadType, setUploadType] = useState<UploadType>("departments");
-  const [uploadYear, setUploadYear] = useState("FY2026");
+  const [uploadYear, setUploadYear] = useState("2026");
   const [rawData, setRawData] = useState("");
   const [fileFormat, setFileFormat] = useState("csv");
   const [preview, setPreview] = useState<{ headers: string[]; preview: Record<string, string>[]; rows?: Record<string, string>[]; totalRows: number } | null>(null);
@@ -447,12 +448,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
 
       if (data.mode === "import_proposal" && data.rows?.length > 0) {
         // Normalise Year values: strip any FY prefix (FY2026 → 2026)
-        const normaliseYear = (y: any) => {
-          const s = String(y ?? "");
-          const m = s.match(/\b(20\d{2})\b/);
-          return m ? m[1] : s.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
-        };
-        const normRows = (data.rows || []).map((r: any) => ({ ...r, Year: normaliseYear(r.Year) }));
+        const normRows = (data.rows || []).map((r: any) => ({ ...r, Year: normalizeYear(r.Year) }));
         setProposedRows(normRows);
         // Use AI-detected data type; fall back to "departments"
         const detectedType: UploadType =
@@ -559,11 +555,8 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
 
     // Normalise year: extract plain 4-digit number from any format
     const firstRow = proposedRows[0] as any;
-    const rawDetected: string = String(firstRow?.Year || uploadYear || "");
-    const yearNumMatch = rawDetected.match(/\b(20\d{2})\b/);
-    const detectedYear: string = yearNumMatch ? yearNumMatch[1] : rawDetected.replace(/^FY\s*/i, "").replace(/^Fiscal\s+Year\s+/i, "").trim();
-    const VALID_YEARS = ["2027","2026","2025","2024","2023","2022","2021"];
-    const validYear = VALID_YEARS.includes(detectedYear) ? detectedYear : (detectedYear || uploadYear);
+    const detectedYear = normalizeYear(firstRow?.Year || uploadYear || "");
+    const validYear = (SELECTABLE_YEARS as readonly string[]).includes(detectedYear) ? detectedYear : (detectedYear || uploadYear);
 
     setUploadYear(validYear);
     setUploadType(proposedDataType);
@@ -879,14 +872,14 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Fiscal Year</label>
+                <label className="text-xs font-medium mb-1.5 block text-muted-foreground uppercase tracking-wide">Year</label>
                 <select
                   className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={uploadYear}
                   onChange={e => setUploadYear(e.target.value)}
                   data-testid="select-upload-year"
                 >
-                  {["FY2027","FY2026","FY2025","FY2024"].map(y => <option key={y} value={y}>{y}</option>)}
+                  {SELECTABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
             </div>
@@ -990,7 +983,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
             <button onClick={() => setStep("map")} className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline">← Back to column mapping</button>
             <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span className="font-medium">{TYPE_LABELS[uploadType]}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Fiscal Year</span><span className="font-medium">{uploadYear}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Year</span><span className="font-medium">{uploadYear}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Rows to import</span><span className="font-medium">{preview.totalRows}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Columns mapped</span><span className="font-medium">{Object.keys(columnMap).length} / {REQUIRED_COLS[uploadType].length}</span></div>
             </div>

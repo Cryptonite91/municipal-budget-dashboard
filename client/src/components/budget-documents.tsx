@@ -175,12 +175,12 @@ function UploadZone({
                   className={fieldCls}
                   value={state.displayName}
                   onChange={e => setState(s => ({ ...s, displayName: e.target.value }))}
-                  placeholder="e.g. FY2025 General Fund Budget"
+                  placeholder="e.g. 2025 General Fund Budget"
                   data-testid="input-doc-name"
                 />
               </div>
               <div className="grid grid-cols-[100px_1fr] items-center gap-2">
-                <label className="text-xs text-muted-foreground text-right">Fiscal year</label>
+                <label className="text-xs text-muted-foreground text-right">Year</label>
                 <select
                   className={fieldCls}
                   value={state.year}

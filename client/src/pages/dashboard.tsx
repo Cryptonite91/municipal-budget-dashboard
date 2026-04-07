@@ -198,7 +198,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-xl font-bold">{summary.municipalityName} Budget Overview</h1>
           <p className="text-sm text-muted-foreground">
-            Fiscal Year {activeYear} · Population {summary.population.toLocaleString()}
+            {activeYear}{summary.population > 0 ? ` · Population ${summary.population.toLocaleString()}` : ""}
           </p>
         </div>
         <Select value={activeYear} onValueChange={setSelectedYear}>
@@ -238,7 +238,7 @@ export default function Dashboard() {
           value={formatCurrency(summary.totalBudget, true)}
           icon={<DollarSign className="h-4 w-4" />}
           trend={{ value: summary.yoyChange, label: "vs prior year" }}
-          tooltip="The total approved budget for all departments in this fiscal year."
+          tooltip="The total approved budget for all departments in this year."
         />
         <KpiCard
           title="Cost per Resident"
