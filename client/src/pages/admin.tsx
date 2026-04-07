@@ -346,7 +346,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
       role: "assistant",
-      content: "Upload a budget PDF to get proposed import rows, or ask me a question about the import workflow.",
+      content: "Post your financial data here as text, Excel, etc. or ask budget related questions to the application.",
       mode: "answer",
     },
   ]);
@@ -381,7 +381,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
     const ALLOWED = ["application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "application/vnd.ms-excel", "text/plain"];
     if (!ALLOWED.includes(file.type) && !file.name.endsWith(".pdf") && !file.name.endsWith(".csv")) {
-      toast({ title: "Unsupported file", description: "Attach a PDF, CSV, or Excel file.", variant: "destructive" });
+      toast({ title: "Unsupported file", description: "Attach a CSV, Excel, or text file.", variant: "destructive" });
       return;
     }
     const base64 = await new Promise<string>((resolve, reject) => {
@@ -391,7 +391,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       reader.readAsDataURL(file);
     });
     setPendingFile({ name: file.name, base64, mimeType: file.type || "application/pdf" });
-    toast({ title: "File ready", description: `${file.name} attached — send a message or just hit Send to analyze.` });
+    toast({ title: "File ready", description: `${file.name} attached — send a message or hit Send to analyze.` });
   }, [toast]);
 
   // ── Send to /api/chat ────────────────────────────────────────────────────────
@@ -662,7 +662,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
           <div>
             <CardTitle className="text-base">Import Budget Data</CardTitle>
             <CardDescription>
-              Chat with the AI to analyze a budget document and get proposed import rows, or switch to CSV/Excel for manual entry.
+              Post your financial data as text or Excel, or ask budget related questions. Switch to CSV / Excel for manual entry.
             </CardDescription>
           </div>
           {/* Mode tabs */}
@@ -752,7 +752,7 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
               <button
                 onClick={() => chatFileRef.current?.click()}
                 className="p-2 rounded-lg border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
-                title="Attach PDF or CSV"
+                title="Attach CSV or Excel file"
                 data-testid="btn-attach-file"
               >
                 <Upload className="h-4 w-4" />
@@ -761,12 +761,12 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
                 ref={chatFileRef}
                 type="file"
                 className="hidden"
-                accept=".pdf,.csv,.xlsx,.xls"
+                accept=".csv,.xlsx,.xls,.txt"
                 onChange={e => { const f = e.target.files?.[0]; if (f) handleChatFile(f); e.target.value = ""; }}
               />
               <input
                 className="flex-1 h-9 rounded-lg border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Ask a question or attach a budget PDF…"
+                placeholder="Post financial data or ask a budget question…"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !loading) { e.preventDefault(); sendMessage(); }}}

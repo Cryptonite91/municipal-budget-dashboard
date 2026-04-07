@@ -1113,6 +1113,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       // ── System prompt ────────────────────────────────────────────────────────
+      const muni = res.locals.muni as Municipality;
       // Inject municipality's current allowed values so AI uses them
       const foMapChat = await storage.getFieldOptionsMap(muni.id);
       const allowedDepts = foMapChat.department.join(", ");
@@ -1121,9 +1122,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const allowedRevCats = foMapChat.rev_category.join(", ");
 
       const SYSTEM = `You are a budget import assistant for a municipal budget transparency dashboard.
-You help administrators analyze budget documents and prepare data for import.
+You help administrators analyze financial data and prepare it for import.
 
-The importer supports three data types. Detect the correct type from the document content:
+The importer supports three data types. Detect the correct type from the data provided:
 
 TYPE: "departments" — department expenditure budgets
   Columns: Department | Category | Budgeted Amount | Spent Amount | Year
@@ -1152,17 +1153,17 @@ TYPE: "projects" — capital projects
   - Year = plain numeric year ONLY (e.g. 2026)
 
 Detection rules:
-- If the document section is labelled "Revenues", "Revenue Sources", "Incoming", use type "revenue"
-- If the document section is labelled "Expenditures", "Appropriations", "Expenses", "Spending", use type "departments"
+- If the data is labelled "Revenues", "Revenue Sources", "Incoming", use type "revenue"
+- If the data is labelled "Expenditures", "Appropriations", "Expenses", "Spending", use type "departments"
 - If rows describe multi-year projects with completion %, use type "projects"
-- If the document contains BOTH revenue and expenditure sections, propose the larger section first and note the other exists
-- YEAR RULE: Always output Year as a plain 4-digit number (e.g. 2026). Never output "FY2026", "FY 2026", "Fiscal Year 2026", or any prefixed form. If you cannot confidently determine the year from the document, set Year to null and include a clarifying question in the questions array.
+- If the data contains BOTH revenue and expenditure sections, propose the larger section first and note the other exists
+- YEAR RULE: Always output Year as a plain 4-digit number (e.g. 2026). Never output "FY2026", "FY 2026", "Fiscal Year 2026", or any prefixed form. If you cannot confidently determine the year, set Year to null and include a clarifying question in the questions array.
 
-When the admin uploads a budget document, analyze it and either:
+When the admin provides financial data, analyze it and either:
 1. Return proposed import rows (if you have enough data), OR
-2. Ask ONE concise clarifying question (e.g. "This document has both revenue and expenditure sections. Which would you like to import first?")
+2. Ask ONE concise clarifying question (e.g. "This data has both revenue and expenditure sections. Which would you like to import first?")
 
-If no document is attached, answer general app questions concisely (1-4 sentences).
+If no data is provided, answer general app questions concisely (1-4 sentences).
 
 RESPONSE FORMAT — valid JSON only, no markdown, no prose:
 
