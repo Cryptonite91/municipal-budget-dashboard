@@ -15,13 +15,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useTenantSlug } from "@/hooks/use-tenant";
 import { tKey, useMunicipality } from "@/hooks/use-budget-data";
-import type { UploadHistory, CitizenComment, EmailSubscriber } from "@shared/schema";
+import type { UploadHistory, CitizenComment, EmailSubscriber, FieldOption } from "@shared/schema";
 import {
   Upload, FileText, CheckCircle2, AlertCircle, Lock, LogOut, ShieldCheck,
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
   ChevronUp, FileSpreadsheet, Table, ArrowRight, Users, Globe,
   Sparkles, Loader2, AlertTriangle, Info, X, Building2, UserCircle2, Clock,
-  Calendar, Pencil, Save, Minus,
+  Calendar, Pencil, Save, Minus, Plus, Tag,
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
@@ -1382,8 +1382,150 @@ function BatchRecordDetail({ batchId, token, slug }: { batchId: number; token: s
   );
 }
 
+// ─── Field Options Panel ────────────────────────────────────────────────────
+
+const FO_TABS: { key: string; label: string; type: string }[] = [
+  { key: "department",    label: "Departments",     type: "department" },
+  { key: "source",        label: "Revenue Sources", type: "source" },
+  { key: "dept_category", label: "Dept Categories", type: "dept_category" },
+  { key: "rev_category",  label: "Rev Categories",  type: "rev_category" },
+];
+
+function FieldOptionsTab({ token, slug, fieldType }: { token: string | null; slug: string; fieldType: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [newValue, setNewValue] = useState("");
+
+  const { data: options = [], isLoading } = useQuery<FieldOption[]>({
+    queryKey: tKey(`/api/field-options?type=${fieldType}`, slug),
+    queryFn: () => authFetch(`/api/field-options?type=${fieldType}&tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (value: string) =>
+      authFetch(`/api/field-options?tenant=${slug}`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fieldType, value }),
+      }).then(r => r.ok ? r.json() : r.json().then((e: any) => Promise.reject(e.error))),
+    onSuccess: () => {
+      setNewValue("");
+      qc.invalidateQueries({ queryKey: tKey(`/api/field-options?type=${fieldType}`, slug) });
+      toast({ title: "Option added" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: String(e), variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) =>
+      authFetch(`/api/field-options/${id}?tenant=${slug}`, token, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: tKey(`/api/field-options?type=${fieldType}`, slug) });
+      toast({ title: "Option removed" });
+    },
+    onError: () => toast({ title: "Error deleting option", variant: "destructive" }),
+  });
+
+  const systemOpts = options.filter(o => o.isSystem);
+  const customOpts = options.filter(o => !o.isSystem);
+
+  return (
+    <div className="space-y-3">
+      {/* System defaults — read-only chips */}
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-1.5">System defaults (read-only)</p>
+        {isLoading ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {systemOpts.map(o => (
+              <span key={o.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground border">{o.value}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Custom options */}
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-1.5">Custom options (municipality-specific)</p>
+        {customOpts.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No custom options yet.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {customOpts.map(o => (
+              <span key={o.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-primary/10 text-primary border border-primary/20">
+                {o.value}
+                <button
+                  className="ml-0.5 hover:text-destructive transition-colors"
+                  onClick={() => deleteMutation.mutate(o.id)}
+                  data-testid={`btn-delete-fo-${o.id}`}
+                  title="Remove"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add custom option */}
+      <div className="flex gap-2">
+        <Input
+          className="h-8 text-sm"
+          placeholder="Add custom value…"
+          value={newValue}
+          onChange={e => setNewValue(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && newValue.trim()) addMutation.mutate(newValue.trim()); }}
+          data-testid={`input-fo-new-${fieldType}`}
+        />
+        <Button
+          size="sm"
+          className="h-8 px-3"
+          disabled={!newValue.trim() || addMutation.isPending}
+          onClick={() => addMutation.mutate(newValue.trim())}
+          data-testid={`btn-fo-add-${fieldType}`}
+        >
+          {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function FieldOptionsPanel({ token, slug }: { token: string | null; slug: string }) {
+  const [activeTab, setActiveTab] = useState("department");
+  return (
+    <Card data-testid="card-field-options">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Tag className="h-4 w-4" />Controlled Field Options
+        </CardTitle>
+        <CardDescription>Manage allowed values for Department, Revenue Source, and Category fields. System defaults are seeded automatically; add municipality-specific options below.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="h-8 mb-4">
+            {FO_TABS.map(t => (
+              <TabsTrigger key={t.key} value={t.key} className="text-xs h-7 px-3">{t.label}</TabsTrigger>
+            ))}
+          </TabsList>
+          {FO_TABS.map(t => (
+            <TabsContent key={t.key} value={t.key}>
+              <FieldOptionsTab token={token} slug={slug} fieldType={t.type} />
+            </TabsContent>
+          ))}
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
 function UploadHistoryPanel({ token, slug }: { token: string | null; slug: string }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
   const { data: uploads = [] } = useQuery<UploadHistory[]>({
     queryKey: tKey("/api/uploads", slug),
     queryFn: () => authFetch(`/api/uploads?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
@@ -1391,6 +1533,10 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
   });
 
   if (!uploads.length) return null;
+
+  const totalPages = Math.ceil(uploads.length / PAGE_SIZE);
+  const pageUploads = uploads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
   return (
     <Card data-testid="card-import-history">
       <CardHeader className="pb-3">
@@ -1399,7 +1545,7 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
       </CardHeader>
       <CardContent className="p-0">
         <div className="divide-y">
-          {uploads.map(u => (
+          {pageUploads.map(u => (
             <div key={u.id} data-testid={`batch-row-${u.id}`}>
               <button
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/30 transition-colors"
@@ -1424,6 +1570,19 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
             </div>
           ))}
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t text-xs text-muted-foreground">
+            <span>Page {page + 1} of {totalPages}</span>
+            <div className="flex gap-1">
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                <ChevronUp className="h-3 w-3 -rotate-90" />Prev
+              </Button>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+                Next<ChevronDown className="h-3 w-3 -rotate-90" />
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1682,6 +1841,9 @@ function AdminDashboard() {
 
       {/* Upload wizard */}
       <BudgetChatbot token={token} slug={slug} />
+
+      {/* Controlled field options */}
+      <FieldOptionsPanel token={token} slug={slug} />
 
       {/* Import history with expandable batch records */}
       <UploadHistoryPanel token={token} slug={slug} />

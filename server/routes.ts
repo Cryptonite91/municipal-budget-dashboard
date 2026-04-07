@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "fs";
 import { join, extname } from "path";
 import pdfParse from "pdf-parse";
 import { normalizeYear } from "./year-utils";
+import { matchToAllowed } from "./field-options";
 
 // ─── Auth: per-tenant token sessions ─────────────────────────────────────────
 // Map: token → municipalityId
@@ -544,6 +545,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ── Field options (controlled vocabulary) ───────────────────────────────
+  app.get("/api/field-options", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const fieldType = req.query.type as string | undefined;
+      const options = await storage.getFieldOptions(muni.id, fieldType);
+      res.json(options);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/field-options", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const { fieldType, value } = req.body;
+      if (!fieldType || !value) return res.status(400).json({ error: "fieldType and value required" });
+      const trimmed = value.trim();
+      if (!trimmed) return res.status(400).json({ error: "value must not be empty" });
+      const created = await storage.createFieldOption({ municipalityId: muni.id, fieldType, value: trimmed, isSystem: false });
+      res.json(created);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/field-options/:id", resolveTenant, requireAuth, async (req, res) => {
+    try {
+      const muni = res.locals.muni as Municipality;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "invalid id" });
+      await storage.deleteFieldOption(id, muni.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Upload history ────────────────────────────────────────────────────────
   app.get("/api/uploads", resolveTenant, requireAuth, async (req, res) => {
     const muni = res.locals.muni as Municipality;
@@ -652,29 +691,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Snapshot of imported records for history detail view
       const batchSnapshot: Record<string, unknown>[] = [];
 
+      // Load controlled vocabulary for this municipality (system + custom)
+      const foMap = await storage.getFieldOptionsMap(muni.id);
+
       if (type === "departments") {
         await storage.clearDepartmentBudgetsByYear(muni.id, year);
         for (const row of rows) {
-          const department = col(row, "department", ["department", "dept"]);
-          const category = col(row, "category", ["category", "sub-category", "subcategory", "line item"]);
+          const rawDept = col(row, "department", ["department", "dept"]);
+          const rawCat = col(row, "category", ["category", "sub-category", "subcategory", "line item"]);
           const budgetedAmount = parseFloat(col(row, "budgetedAmount", ["budgeted amount", "budgeted", "budget"])) || 0;
           const spentAmount = parseFloat(col(row, "spentAmount", ["spent amount", "spent", "actual", "expenditure"])) || 0;
-          if (department) {
-            await storage.createDepartmentBudget({ municipalityId: muni.id, year, department, category: category || department, budgetedAmount, spentAmount });
-            batchSnapshot.push({ Department: department, Category: category || department, "Budgeted Amount": budgetedAmount, "Spent Amount": spentAmount, Year: year });
+          if (rawDept) {
+            const deptResult = matchToAllowed(rawDept, foMap.department, "department");
+            const catResult = matchToAllowed(rawCat || rawDept, foMap.dept_category, "dept_category");
+            if (deptResult.isNew) await storage.ensureCustomFieldOption(muni.id, "department", deptResult.matched);
+            if (catResult.isNew) await storage.ensureCustomFieldOption(muni.id, "dept_category", catResult.matched);
+            const department = deptResult.matched;
+            const category = catResult.matched;
+            await storage.createDepartmentBudget({ municipalityId: muni.id, year, department, category, budgetedAmount, spentAmount });
+            batchSnapshot.push({ Department: department, Category: category, "Budgeted Amount": budgetedAmount, "Spent Amount": spentAmount, Year: year });
             recordCount++;
           }
         }
       } else if (type === "revenue") {
         await storage.clearRevenueSourcesByYear(muni.id, year);
         for (const row of rows) {
-          const source = col(row, "source", ["source", "revenue source", "name"]);
-          const category = col(row, "category", ["category", "type", "revenue type"]);
+          const rawSource = col(row, "source", ["source", "revenue source", "name"]);
+          const rawCat = col(row, "category", ["category", "type", "revenue type"]);
           const budgetedAmount = parseFloat(col(row, "budgetedAmount", ["budgeted amount", "budgeted", "budget"])) || 0;
           const collectedAmount = parseFloat(col(row, "collectedAmount", ["collected amount", "collected", "actual", "received"])) || 0;
-          if (source) {
-            await storage.createRevenueSource({ municipalityId: muni.id, year, source, category: category || source, budgetedAmount, collectedAmount });
-            batchSnapshot.push({ Source: source, Category: category || source, "Budgeted Amount": budgetedAmount, "Collected Amount": collectedAmount, Year: year });
+          if (rawSource) {
+            const sourceResult = matchToAllowed(rawSource, foMap.source, "source");
+            const catResult = matchToAllowed(rawCat || rawSource, foMap.rev_category, "rev_category");
+            if (sourceResult.isNew) await storage.ensureCustomFieldOption(muni.id, "source", sourceResult.matched);
+            if (catResult.isNew) await storage.ensureCustomFieldOption(muni.id, "rev_category", catResult.matched);
+            const source = sourceResult.matched;
+            const category = catResult.matched;
+            await storage.createRevenueSource({ municipalityId: muni.id, year, source, category, budgetedAmount, collectedAmount });
+            batchSnapshot.push({ Source: source, Category: category, "Budgeted Amount": budgetedAmount, "Collected Amount": collectedAmount, Year: year });
             recordCount++;
           }
         }
@@ -1059,6 +1113,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       // ── System prompt ────────────────────────────────────────────────────────
+      // Inject municipality's current allowed values so AI uses them
+      const foMapChat = await storage.getFieldOptionsMap(muni.id);
+      const allowedDepts = foMapChat.department.join(", ");
+      const allowedSources = foMapChat.source.join(", ");
+      const allowedDeptCats = foMapChat.dept_category.join(", ");
+      const allowedRevCats = foMapChat.rev_category.join(", ");
+
       const SYSTEM = `You are a budget import assistant for a municipal budget transparency dashboard.
 You help administrators analyze budget documents and prepare data for import.
 
@@ -1066,16 +1127,16 @@ The importer supports three data types. Detect the correct type from the documen
 
 TYPE: "departments" — department expenditure budgets
   Columns: Department | Category | Budgeted Amount | Spent Amount | Year
-  - Department = high-level dept (e.g. "Public Safety", "Administration")
-  - Category = subcategory/line item (e.g. "Police", "Salaries")
+  - Department = high-level dept. PREFER one of these allowed values: ${allowedDepts}. Use the closest match; only use a different value if none fit.
+  - Category = subcategory/line item. PREFER one of these allowed values: ${allowedDeptCats}. Use the closest match; only use a different value if none fit.
   - Budgeted Amount = approved budget, plain number, no $ or commas
   - Spent Amount = actual/YTD spent if available, else null
   - Year = plain numeric year ONLY (e.g. 2026). Strip any prefix: "FY2026" → 2026, "Fiscal Year 2026" → 2026.
 
 TYPE: "revenue" — revenue sources / incoming funds
   Columns: Source | Category | Budgeted Amount | Collected Amount | Year
-  - Source = revenue source name (e.g. "Property Taxes", "State Aid")
-  - Category = revenue category (e.g. "Taxes", "Intergovernmental", "Fees")
+  - Source = revenue source name. PREFER one of these allowed values: ${allowedSources}. Use the closest match; only use a different value if none fit.
+  - Category = revenue category. PREFER one of these allowed values: ${allowedRevCats}. Use the closest match; only use a different value if none fit.
   - Budgeted Amount = projected revenue, plain number
   - Collected Amount = actual revenue collected if available, else null
   - Year = plain numeric year ONLY (e.g. 2026). Strip any prefix.

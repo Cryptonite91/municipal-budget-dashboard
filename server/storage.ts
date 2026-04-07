@@ -9,6 +9,7 @@ import {
   type EmailSubscriber, type InsertEmailSubscriber, emailSubscribers,
   type BudgetDocument, type InsertBudgetDocument, budgetDocuments,
   type AdminUser, type InsertAdminUser, adminUsers,
+  type FieldOption, type InsertFieldOption, fieldOptions,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
@@ -337,6 +338,48 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(importBatchRecords)
       .where(and(eq(importBatchRecords.batchId, batchId), eq(importBatchRecords.municipalityId, muniId)))
       .all();
+  }
+
+  // ── Field options ───────────────────────────────────────────────────────────
+  /** Returns system defaults + municipality-specific options for a given fieldType. */
+  async getFieldOptions(muniId: number, fieldType?: string): Promise<FieldOption[]> {
+    const rows = await db.select().from(fieldOptions).all();
+    return rows.filter(r =>
+      (r.municipalityId === null || r.municipalityId === muniId) &&
+      (fieldType === undefined || r.fieldType === fieldType)
+    );
+  }
+
+  /** Returns all system+custom values for a muni as a map: fieldType -> string[] */
+  async getFieldOptionsMap(muniId: number): Promise<Record<string, string[]>> {
+    const rows = await this.getFieldOptions(muniId);
+    const map: Record<string, string[]> = {};
+    for (const r of rows) {
+      if (!map[r.fieldType]) map[r.fieldType] = [];
+      if (!map[r.fieldType].includes(r.value)) map[r.fieldType].push(r.value);
+    }
+    return map;
+  }
+
+  async createFieldOption(data: InsertFieldOption): Promise<FieldOption> {
+    return db.insert(fieldOptions).values(data).returning().get();
+  }
+
+  async deleteFieldOption(id: number, muniId: number): Promise<void> {
+    // Only allow deleting municipality-specific options (not system defaults)
+    await db.delete(fieldOptions)
+      .where(and(eq(fieldOptions.id, id), eq(fieldOptions.municipalityId, muniId)))
+      .run();
+  }
+
+  /** Ensure a custom option exists; no-op if already present (case-insensitive). */
+  async ensureCustomFieldOption(muniId: number, fieldType: string, value: string): Promise<void> {
+    const existing = await this.getFieldOptions(muniId, fieldType);
+    const lowVal = value.toLowerCase().trim();
+    const alreadyExists = existing.some(o => o.value.toLowerCase().trim() === lowVal);
+    if (!alreadyExists) {
+      await this.createFieldOption({ municipalityId: muniId, fieldType, value, isSystem: false });
+    }
   }
 }
 

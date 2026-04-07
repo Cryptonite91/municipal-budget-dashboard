@@ -154,6 +154,22 @@ export const insertEmailSubscriberSchema = createInsertSchema(emailSubscribers).
 export type InsertEmailSubscriber = z.infer<typeof insertEmailSubscriberSchema>;
 export type EmailSubscriber = typeof emailSubscribers.$inferSelect;
 
+// ─── Field options (controlled vocabulary for dept/source/category) ─────────
+// System defaults have municipality_id = null, isSystem = true.
+// Municipality-specific custom values have municipality_id = <id>, isSystem = false.
+// fieldType: "department" | "source" | "dept_category" | "rev_category"
+export const fieldOptions = sqliteTable("field_options", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  municipalityId: integer("municipality_id"),  // null = system default
+  fieldType: text("field_type").notNull(),      // "department" | "source" | "dept_category" | "rev_category"
+  value: text("value").notNull(),
+  isSystem: integer("is_system", { mode: "boolean" }).notNull().default(false),
+});
+
+export const insertFieldOptionSchema = createInsertSchema(fieldOptions).omit({ id: true });
+export type InsertFieldOption = z.infer<typeof insertFieldOptionSchema>;
+export type FieldOption = typeof fieldOptions.$inferSelect;
+
 // ─── Budget documents ───────────────────────────────────────────────────────────────
 export const budgetDocuments = sqliteTable("budget_documents", {
   id: integer("id").primaryKey({ autoIncrement: true }),

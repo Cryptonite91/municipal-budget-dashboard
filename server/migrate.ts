@@ -6,6 +6,7 @@
 import { createClient } from "@libsql/client";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
+import { SYSTEM_DEFAULTS, matchToAllowed, type FieldType } from "./field-options";
 
 const dbPath = process.env.DATABASE_PATH || "data.db";
 const dbDir = dirname(dbPath);
@@ -123,6 +124,15 @@ const importBatchRecordsTable = `CREATE TABLE IF NOT EXISTS import_batch_records
   record_json TEXT NOT NULL
 )`;
 
+// New table: field_options (controlled vocab for dept/source/category)
+const fieldOptionsTable = `CREATE TABLE IF NOT EXISTS field_options (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  municipality_id INTEGER,
+  field_type TEXT NOT NULL,
+  value TEXT NOT NULL,
+  is_system INTEGER NOT NULL DEFAULT 0
+)`;
+
 // ALTER TABLE migrations for columns added after initial schema
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
@@ -141,6 +151,8 @@ export async function runMigrations() {
   await migrationClient.execute(adminUsersTable);
   // Create import_batch_records table
   await migrationClient.execute(importBatchRecordsTable);
+  // Create field_options table
+  await migrationClient.execute(fieldOptionsTable);
   // Run alterations, ignoring "duplicate column" errors (idempotent)
   for (const sql of alterations) {
     try {
@@ -196,6 +208,104 @@ export async function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate] admin_user seed warning:", e.message);
   }
+  // ── Seed system default field options (idempotent) ──────────────────────────
+  try {
+    for (const [fieldType, values] of Object.entries(SYSTEM_DEFAULTS) as [FieldType, string[]][]) {
+      for (const value of values) {
+        await migrationClient.execute(
+          `INSERT OR IGNORE INTO field_options (municipality_id, field_type, value, is_system)
+           SELECT NULL, '${fieldType.replace(/'/g, "''")}', '${value.replace(/'/g, "''")}', 1
+           WHERE NOT EXISTS (
+             SELECT 1 FROM field_options
+             WHERE municipality_id IS NULL AND field_type='${fieldType.replace(/'/g, "''")}' AND value='${value.replace(/'/g, "''")}'
+           )`
+        );
+      }
+    }
+    console.log("[migrate] Field option defaults seeded");
+  } catch (e: any) {
+    console.warn("[migrate] field_options seed warning:", e.message);
+  }
+
+  // ── Retrofit historical data: normalize dept/source/category to allowed values ──
+  // For each municipality, load their rows and remap values via matchToAllowed().
+  // New custom options are auto-created so no data is lost.
+  try {
+    const munis = (await migrationClient.execute("SELECT id FROM municipalities")).rows as { id: number }[];
+
+    // Helper: get current allowed values for a municipality + fieldType
+    const getAllowed = async (muniId: number, ft: FieldType): Promise<string[]> => {
+      const rows = (await migrationClient.execute(
+        `SELECT value FROM field_options WHERE (municipality_id IS NULL OR municipality_id=${muniId}) AND field_type='${ft}'`
+      )).rows as { value: string }[];
+      return rows.map(r => r.value);
+    };
+
+    // Helper: ensure a custom option exists
+    const ensureCustom = async (muniId: number, ft: FieldType, value: string) => {
+      const lowVal = value.toLowerCase().trim();
+      await migrationClient.execute(
+        `INSERT OR IGNORE INTO field_options (municipality_id, field_type, value, is_system)
+         SELECT ${muniId}, '${ft}', '${value.replace(/'/g, "''")}', 0
+         WHERE NOT EXISTS (
+           SELECT 1 FROM field_options
+           WHERE (municipality_id IS NULL OR municipality_id=${muniId})
+             AND field_type='${ft}'
+             AND LOWER(TRIM(value))='${lowVal.replace(/'/g, "''")}'
+         )`
+      );
+    };
+
+    for (const { id: muniId } of munis) {
+      // ── Department budgets: normalize department and dept_category
+      const deptRows = (await migrationClient.execute(
+        `SELECT id, department, category FROM department_budgets WHERE municipality_id=${muniId}`
+      )).rows as { id: number; department: string; category: string }[];
+
+      for (const row of deptRows) {
+        const deptAllowed = await getAllowed(muniId, "department");
+        const catAllowed  = await getAllowed(muniId, "dept_category");
+
+        const { matched: dept, isNew: deptNew } = matchToAllowed(row.department, deptAllowed, "department");
+        const { matched: cat,  isNew: catNew  } = matchToAllowed(row.category,   catAllowed,  "dept_category");
+
+        if (deptNew) await ensureCustom(muniId, "department",    dept);
+        if (catNew)  await ensureCustom(muniId, "dept_category", cat);
+
+        if (dept !== row.department || cat !== row.category) {
+          await migrationClient.execute(
+            `UPDATE department_budgets SET department='${dept.replace(/'/g, "''")}', category='${cat.replace(/'/g, "''")}' WHERE id=${row.id}`
+          );
+        }
+      }
+
+      // ── Revenue sources: normalize source and rev_category
+      const revRows = (await migrationClient.execute(
+        `SELECT id, source, category FROM revenue_sources WHERE municipality_id=${muniId}`
+      )).rows as { id: number; source: string; category: string }[];
+
+      for (const row of revRows) {
+        const srcAllowed = await getAllowed(muniId, "source");
+        const catAllowed = await getAllowed(muniId, "rev_category");
+
+        const { matched: src, isNew: srcNew } = matchToAllowed(row.source,   srcAllowed, "source");
+        const { matched: cat, isNew: catNew } = matchToAllowed(row.category, catAllowed, "rev_category");
+
+        if (srcNew) await ensureCustom(muniId, "source",       src);
+        if (catNew) await ensureCustom(muniId, "rev_category", cat);
+
+        if (src !== row.source || cat !== row.category) {
+          await migrationClient.execute(
+            `UPDATE revenue_sources SET source='${src.replace(/'/g, "''")}', category='${cat.replace(/'/g, "''")}' WHERE id=${row.id}`
+          );
+        }
+      }
+    }
+    console.log("[migrate] Historical data retrofit complete");
+  } catch (e: any) {
+    console.warn("[migrate] Retrofit warning:", e.message);
+  }
+
   // ── One-time data fix: strip FY prefix from year columns (idempotent) ──────
   // Converts "FY2026" → "2026", "FY2025" → "2025", etc. in all data tables.
   // Safe to run repeatedly: SUBSTR(year, 3) on "2026" produces "26" which
