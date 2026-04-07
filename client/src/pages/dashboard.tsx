@@ -242,9 +242,9 @@ export default function Dashboard() {
         />
         <KpiCard
           title="Cost per Resident"
-          value={formatCurrency(summary.costPerResident)}
+          value={summary.population > 0 ? formatCurrency(summary.costPerResident) : "—"}
           icon={<Users className="h-4 w-4" />}
-          subtitle={`Based on ${summary.population.toLocaleString()} residents`}
+          subtitle={summary.population > 0 ? `Based on ${summary.population.toLocaleString()} residents` : "Set population in admin to enable"}
           tooltip="Total budget divided by the town's population. Shows how much budget is allocated per person."
         />
         <KpiCard

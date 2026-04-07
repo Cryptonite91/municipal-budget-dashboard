@@ -4,6 +4,7 @@ import {
   type DepartmentBudget, type InsertDepartmentBudget, departmentBudgets,
   type CapitalProject, type InsertCapitalProject, capitalProjects,
   type UploadHistory, type InsertUploadHistory, uploadHistory,
+  type ImportBatchRecord, type InsertImportBatchRecord, importBatchRecords,
   type CitizenComment, type InsertCitizenComment, citizenComments,
   type EmailSubscriber, type InsertEmailSubscriber, emailSubscribers,
   type BudgetDocument, type InsertBudgetDocument, budgetDocuments,
@@ -311,6 +312,31 @@ export class DatabaseStorage implements IStorage {
     if (status === "approved") {
       await db.update(municipalities).set({ listed: true }).where(eq(municipalities.id, id));
     }
+  }
+
+  // ── Year management ────────────────────────────────────────────────────────────
+  /** Delete all imported records (departments + revenue) for a given year. */
+  async deleteDataByYear(muniId: number, year: string): Promise<{ departments: number; revenue: number }> {
+    const [depts, rev] = await Promise.all([
+      db.delete(departmentBudgets)
+        .where(and(eq(departmentBudgets.municipalityId, muniId), eq(departmentBudgets.year, year)))
+        .run(),
+      db.delete(revenueSources)
+        .where(and(eq(revenueSources.municipalityId, muniId), eq(revenueSources.year, year)))
+        .run(),
+    ]);
+    return { departments: depts.rowsAffected ?? 0, revenue: rev.rowsAffected ?? 0 };
+  }
+
+  // ── Import batch records ────────────────────────────────────────────────────────
+  async createImportBatchRecord(data: InsertImportBatchRecord): Promise<void> {
+    await db.insert(importBatchRecords).values(data).run();
+  }
+
+  async getImportBatchRecords(batchId: number, muniId: number): Promise<ImportBatchRecord[]> {
+    return db.select().from(importBatchRecords)
+      .where(and(eq(importBatchRecords.batchId, batchId), eq(importBatchRecords.municipalityId, muniId)))
+      .all();
   }
 }
 

@@ -5,6 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -16,6 +21,7 @@ import {
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
   ChevronUp, FileSpreadsheet, Table, ArrowRight, Users, Globe,
   Sparkles, Loader2, AlertTriangle, Info, X, Building2, UserCircle2, Clock,
+  Calendar, Pencil, Save, Minus,
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
@@ -1168,7 +1174,223 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
 }
 
 // ─── Upload history ───────────────────────────────────────────────────────────
+// ── Year Management Panel ──────────────────────────────────────────────────────────
+function YearManagementPanel({ token, slug }: { token: string | null; slug: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [confirmYear, setConfirmYear] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const { data: years = [], isLoading } = useQuery<string[]>({
+    queryKey: tKey("/api/years", slug),
+    queryFn: () => authFetch(`/api/years?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
+  });
+
+  const handleDelete = async () => {
+    if (!confirmYear) return;
+    setDeleting(true);
+    try {
+      const r = await authFetch(`/api/years/${confirmYear}?tenant=${slug}`, token, { method: "DELETE" });
+      if (!r.ok) throw new Error((await r.json()).error ?? "Delete failed");
+      const { departments, revenue } = await r.json();
+      toast({ title: `Year ${confirmYear} deleted`, description: `Removed ${departments} dept + ${revenue} revenue records.` });
+      qc.invalidateQueries({ queryKey: tKey("/api/years", slug) });
+      // Also invalidate dashboard summary so citizen view reflects the deletion
+      qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    } finally {
+      setDeleting(false);
+      setConfirmYear(null);
+    }
+  };
+
+  return (
+    <>
+      <Card data-testid="card-year-management">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            Year Management
+          </CardTitle>
+          <CardDescription>All years with imported data for this municipality. Delete removes all department and revenue records for that year.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground"><Loader2 className="inline h-3.5 w-3.5 animate-spin mr-1.5" />Loading…</p>
+          ) : years.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No data imported yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {years.map(y => (
+                <div key={y} className="flex items-center justify-between p-2.5 rounded-md border bg-muted/20" data-testid={`year-row-${y}`}>
+                  <span className="text-sm font-medium tabular-nums">{y}</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setConfirmYear(y)}
+                    data-testid={`btn-delete-year-${y}`}
+                  >
+                    <Minus className="h-3.5 w-3.5 mr-1" />Delete year
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={!!confirmYear} onOpenChange={open => { if (!open) setConfirmYear(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all data for {confirmYear}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes all department budget and revenue records imported for <strong>{confirmYear}</strong>.
+              This cannot be undone. Capital projects are not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+              disabled={deleting}
+              data-testid="btn-confirm-delete-year"
+            >
+              {deleting ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Deleting…</> : "Delete year"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+// ── Population Panel ──────────────────────────────────────────────────────────────
+function PopulationPanel({ token, slug }: { token: string | null; slug: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data: muni } = useMunicipality();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = () => {
+    setValue(muni?.population ? String(muni.population) : "");
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const pop = parseInt(value.replace(/[^\d]/g, ""), 10);
+    if (isNaN(pop) || pop <= 0) {
+      toast({ title: "Invalid population", description: "Enter a whole number greater than 0.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await authFetch(`/api/municipality?tenant=${slug}`, token, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ population: pop }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error ?? "Save failed");
+      toast({ title: "Population updated" });
+      qc.invalidateQueries({ queryKey: tKey("/api/municipality", slug) });
+      qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
+      setEditing(false);
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card data-testid="card-population">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          Population
+        </CardTitle>
+        <CardDescription>Used to calculate Cost per Resident on the Overview tab.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {editing ? (
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              className="h-8 w-40 text-sm"
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+              autoFocus
+              data-testid="input-population"
+            />
+            <Button size="sm" className="h-8" onClick={save} disabled={saving} data-testid="btn-save-population">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Save className="h-3.5 w-3.5 mr-1.5" />Save</>}
+            </Button>
+            <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className="text-sm tabular-nums" data-testid="text-population">
+              {muni?.population ? muni.population.toLocaleString() : <span className="text-muted-foreground italic">Not set</span>}
+            </span>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startEdit} data-testid="btn-edit-population">
+              <Pencil className="h-3 w-3 mr-1.5" />Edit
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Import History Panel (with expandable batch records) ─────────────────────
+function BatchRecordDetail({ batchId, token, slug }: { batchId: number; token: string | null; slug: string }) {
+  const { data: records = [], isLoading } = useQuery<{ id: number; data: Record<string, unknown> }[]>({
+    queryKey: tKey(`/api/uploads/${batchId}/records`, slug),
+    queryFn: () => authFetch(`/api/uploads/${batchId}/records?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
+  });
+
+  if (isLoading) return <p className="text-xs text-muted-foreground px-4 pb-3"><Loader2 className="inline h-3 w-3 animate-spin mr-1" />Loading records…</p>;
+  if (records.length === 0) return <p className="text-xs text-muted-foreground px-4 pb-3 italic">No record detail stored for this batch (imported before history detail was enabled).</p>;
+
+  const headers = Object.keys(records[0].data);
+  return (
+    <div className="px-3 pb-3 overflow-x-auto">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr>
+            {headers.map(h => (
+              <th key={h} className="text-left py-1 px-2 text-muted-foreground font-medium border-b whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map(r => (
+            <tr key={r.id} className="border-b last:border-0 hover:bg-muted/20">
+              {headers.map(h => (
+                <td key={h} className="py-1 px-2 tabular-nums">
+                  {typeof r.data[h] === "number"
+                    ? Number.isInteger(r.data[h]) ? String(r.data[h]) : (r.data[h] as number).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : String(r.data[h] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function UploadHistoryPanel({ token, slug }: { token: string | null; slug: string }) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const { data: uploads = [] } = useQuery<UploadHistory[]>({
     queryKey: tKey("/api/uploads", slug),
     queryFn: () => authFetch(`/api/uploads?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
@@ -1177,21 +1399,35 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
 
   if (!uploads.length) return null;
   return (
-    <Card>
-      <CardHeader><CardTitle className="text-base">Import History</CardTitle></CardHeader>
-      <CardContent>
-        <div className="space-y-1.5">
+    <Card data-testid="card-import-history">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Import History</CardTitle>
+        <CardDescription>Click a batch to see the imported records.</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="divide-y">
           {uploads.map(u => (
-            <div key={u.id} className="flex items-center gap-3 py-1.5 border-b last:border-0">
-              <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{u.filename}</p>
-                <p className="text-xs text-muted-foreground">{u.notes}</p>
-              </div>
-              <Badge className={u.status === "success" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : ""} variant={u.status === "success" ? "default" : "destructive"}>
-                {u.status === "success" ? <><CheckCircle2 className="h-3 w-3 mr-1" />OK</> : <><AlertCircle className="h-3 w-3 mr-1" />Error</>}
-              </Badge>
-              <span className="text-xs text-muted-foreground tabular-nums shrink-0">{new Date(u.uploadedAt).toLocaleDateString()}</span>
+            <div key={u.id} data-testid={`batch-row-${u.id}`}>
+              <button
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/30 transition-colors"
+                onClick={() => setExpandedId(expandedId === u.id ? null : u.id)}
+              >
+                <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{u.filename}</p>
+                  <p className="text-xs text-muted-foreground">{u.notes}</p>
+                </div>
+                <Badge className={u.status === "success" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : ""} variant={u.status === "success" ? "default" : "destructive"}>
+                  {u.status === "success" ? <><CheckCircle2 className="h-3 w-3 mr-1" />{u.recordCount} records</> : <><AlertCircle className="h-3 w-3 mr-1" />Error</>}
+                </Badge>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">{new Date(u.uploadedAt).toLocaleDateString()}</span>
+                {expandedId === u.id ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+              </button>
+              {expandedId === u.id && (
+                <div className="border-t bg-muted/10">
+                  <BatchRecordDetail batchId={u.id} token={token} slug={slug} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1454,8 +1690,14 @@ function AdminDashboard() {
       {/* Upload wizard */}
       <BudgetChatbot token={token} slug={slug} />
 
-      {/* Upload history */}
+      {/* Import history with expandable batch records */}
       <UploadHistoryPanel token={token} slug={slug} />
+
+      {/* Year management — list + delete by year */}
+      <YearManagementPanel token={token} slug={slug} />
+
+      {/* Population — admin-editable, drives Overview cost-per-resident */}
+      <PopulationPanel token={token} slug={slug} />
 
       {/* Comment moderation */}
       <CommentModeration token={token} slug={slug} />

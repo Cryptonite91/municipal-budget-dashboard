@@ -317,6 +317,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(years);
   });
 
+  app.delete("/api/years/:year", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const year = (req.params.year as string).replace(/^FY/i, "");
+    if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: "Invalid year" });
+    try {
+      const result = await storage.deleteDataByYear(muni.id, year);
+      res.json({ success: true, year, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/uploads/:id/records", resolveTenant, requireAuth, async (req, res) => {
+    const muni = res.locals.muni as Municipality;
+    const batchId = Number(req.params.id);
+    if (isNaN(batchId)) return res.status(400).json({ error: "Invalid batch id" });
+    try {
+      const records = await storage.getImportBatchRecords(batchId, muni.id);
+      res.json(records.map(r => ({ id: r.id, data: JSON.parse(r.recordJson) })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Revenue ───────────────────────────────────────────────────────────────
   app.get("/api/revenue/:year", resolveTenant, async (req, res) => {
     const muni = res.locals.muni as Municipality;
@@ -628,6 +652,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
 
       let recordCount = 0;
+      // Snapshot of imported records for history detail view
+      const batchSnapshot: Record<string, unknown>[] = [];
 
       if (type === "departments") {
         await storage.clearDepartmentBudgetsByYear(muni.id, year);
@@ -638,6 +664,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const spentAmount = parseFloat(col(row, "spentAmount", ["spent amount", "spent", "actual", "expenditure"])) || 0;
           if (department) {
             await storage.createDepartmentBudget({ municipalityId: muni.id, year, department, category: category || department, budgetedAmount, spentAmount });
+            batchSnapshot.push({ Department: department, Category: category || department, "Budgeted Amount": budgetedAmount, "Spent Amount": spentAmount, Year: year });
             recordCount++;
           }
         }
@@ -650,6 +677,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const collectedAmount = parseFloat(col(row, "collectedAmount", ["collected amount", "collected", "actual", "received"])) || 0;
           if (source) {
             await storage.createRevenueSource({ municipalityId: muni.id, year, source, category: category || source, budgetedAmount, collectedAmount });
+            batchSnapshot.push({ Source: source, Category: category || source, "Budgeted Amount": budgetedAmount, "Collected Amount": collectedAmount, Year: year });
             recordCount++;
           }
         }
@@ -667,12 +695,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const description = col(row, "description", ["description", "notes"]);
           if (name) {
             await storage.createCapitalProject({ municipalityId: muni.id, name, department: department || "General", totalBudget, spentToDate, percentComplete, startDate: startDate || new Date().toISOString().split("T")[0], expectedEnd: expectedEnd || new Date().toISOString().split("T")[0], status, description: description || null });
+            batchSnapshot.push({ Name: name, Department: department || "General", "Total Budget": totalBudget, "Spent To Date": spentToDate, "Percent Complete": percentComplete, Status: status, Year: year });
             recordCount++;
           }
         }
       }
 
-      await storage.createUploadHistory({
+      const historyEntry = await storage.createUploadHistory({
         municipalityId: muni.id,
         filename: `${type}_${year}.${format}`,
         uploadedAt: new Date().toISOString(),
@@ -681,7 +710,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         notes: aiReviewLog
           ? `Imported ${recordCount} ${type} records for ${year} [AI-assisted]`
           : `Imported ${recordCount} ${type} records for ${year}`,
+        dataType: type,
+        year,
       });
+      // Persist per-record snapshot for import history detail
+      for (const rec of batchSnapshot) {
+        await storage.createImportBatchRecord({ batchId: historyEntry.id, municipalityId: muni.id, recordJson: JSON.stringify(rec) });
+      }
 
       // Mark onboarding complete if all sections have data
       const [hasRevenue, hasDepts] = await Promise.all([

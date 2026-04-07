@@ -115,11 +115,22 @@ const adminUsersTable = `CREATE TABLE IF NOT EXISTS admin_users (
   created_at TEXT NOT NULL
 )`;
 
+// New table: import_batch_records (per-row snapshots for import history detail)
+const importBatchRecordsTable = `CREATE TABLE IF NOT EXISTS import_batch_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL,
+  municipality_id INTEGER NOT NULL,
+  record_json TEXT NOT NULL
+)`;
+
 // ALTER TABLE migrations for columns added after initial schema
 const alterations = [
   `ALTER TABLE municipalities ADD COLUMN listed INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE budget_documents ADD COLUMN ai_review_log TEXT`,
   `ALTER TABLE municipalities ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'`,
+  // Year management + import history detail
+  `ALTER TABLE upload_history ADD COLUMN data_type TEXT`,
+  `ALTER TABLE upload_history ADD COLUMN year TEXT`,
 ];
 
 export async function runMigrations() {
@@ -128,6 +139,8 @@ export async function runMigrations() {
   }
   // Create admin_users table
   await migrationClient.execute(adminUsersTable);
+  // Create import_batch_records table
+  await migrationClient.execute(importBatchRecordsTable);
   // Run alterations, ignoring "duplicate column" errors (idempotent)
   for (const sql of alterations) {
     try {

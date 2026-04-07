@@ -163,7 +163,6 @@ export function AppSidebar() {
       <SidebarFooter className="p-4 pt-2 space-y-3">
         {muni && (
           <div className="text-xs opacity-50 space-y-0.5">
-            <p>{muni.fiscalYear} · Pop. {muni.population.toLocaleString()}</p>
             <p>Updated {new Date(muni.lastUpdated).toLocaleDateString()}</p>
           </div>
         )}

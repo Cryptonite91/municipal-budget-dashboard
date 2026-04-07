@@ -104,11 +104,26 @@ export const uploadHistory = sqliteTable("upload_history", {
   recordCount: integer("record_count").notNull(),
   status: text("status").notNull(), // success, error
   notes: text("notes"),
+  // Added: makes year-management and history detail possible
+  dataType: text("data_type"),  // "departments" | "revenue" | "projects"
+  year: text("year"),           // plain 4-digit year, e.g. "2026"
 });
 
 export const insertUploadHistorySchema = createInsertSchema(uploadHistory).omit({ id: true });
 export type InsertUploadHistory = z.infer<typeof insertUploadHistorySchema>;
 export type UploadHistory = typeof uploadHistory.$inferSelect;
+
+// ─── Import batch records (lightweight snapshot for history detail) ───────────
+export const importBatchRecords = sqliteTable("import_batch_records", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  batchId: integer("batch_id").notNull(),          // FK → upload_history.id
+  municipalityId: integer("municipality_id").notNull(),
+  recordJson: text("record_json").notNull(),        // JSON-stringified row
+});
+
+export const insertImportBatchRecordSchema = createInsertSchema(importBatchRecords).omit({ id: true });
+export type InsertImportBatchRecord = z.infer<typeof insertImportBatchRecordSchema>;
+export type ImportBatchRecord = typeof importBatchRecords.$inferSelect;
 
 // ─── Citizen comments ─────────────────────────────────────────────────────────
 export const citizenComments = sqliteTable("citizen_comments", {
