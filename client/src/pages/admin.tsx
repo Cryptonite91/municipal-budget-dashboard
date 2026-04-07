@@ -435,7 +435,22 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("AI service unavailable");
-      const data = await res.json();
+      let data = await res.json();
+
+      // ── Client-side safety net: detect import_proposal JSON in answer text ──
+      // If the server returned mode=answer but the text looks like import_proposal JSON,
+      // attempt to parse it and recover the structured data.
+      if (data.mode === "answer" && data.text && /"mode"\s*:\s*"import_proposal"/.test(data.text)) {
+        try {
+          const jm = data.text.match(/\{[\s\S]*\}/);
+          if (jm) {
+            const recovered = JSON.parse(jm[0]);
+            if (recovered.mode === "import_proposal" && Array.isArray(recovered.rows)) {
+              data = { ...data, ...recovered };
+            }
+          }
+        } catch { /* leave data unchanged */ }
+      }
 
       const assistantMsg: ChatMsg = {
         role: "assistant",

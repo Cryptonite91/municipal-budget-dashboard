@@ -1226,7 +1226,7 @@ Never auto-import. Return rows for admin review only.`;
         body: JSON.stringify({
           model: "sonar-reasoning-pro",
           messages: [{ role: "system", content: SYSTEM }, ...apiMessages],
-          max_tokens: 2048,
+          max_tokens: 4096,
           temperature: 0,
         }),
       });
@@ -1243,7 +1243,11 @@ Never auto-import. Return rows for admin review only.`;
       // ── Parse JSON response ──────────────────────────────────────────────────
       // sonar-reasoning-pro wraps its chain-of-thought in <think>...</think> before the JSON.
       // Strip that block first so the JSON regex doesn't match { inside the reasoning chain.
-      const contentAfterThink = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      let contentAfterThink = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+      // Strip markdown code fences (```json ... ```) that some models wrap around JSON
+      contentAfterThink = contentAfterThink.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+
       const jsonMatch = contentAfterThink.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         // AI returned plain text — wrap it as an answer
@@ -1254,7 +1258,25 @@ Never auto-import. Return rows for admin review only.`;
       try {
         parsed = JSON.parse(jsonMatch[0]);
       } catch {
-        return res.json({ mode: "answer", text: contentAfterThink || rawContent.trim(), rows: [], notes: [] });
+        // ── JSON repair: attempt to fix truncated responses ─────────────────
+        let repaired = jsonMatch[0];
+        // Remove trailing truncated string value (ends mid-word without closing quote)
+        repaired = repaired.replace(/,\s*"[^"]*"\s*:\s*"[^"]*$/, "");
+        repaired = repaired.replace(/,\s*"[^"]*$/, "");
+        // Count and close unclosed brackets/braces
+        const opens = (s: string, ch: string) => (s.match(new RegExp(ch === "[" ? "\\[" : "\\{", "g")) || []).length;
+        const closes = (s: string, ch: string) => (s.match(new RegExp(ch === "]" ? "\\]" : "\\}", "g")) || []).length;
+        const missingBrackets = opens(repaired, "[") - closes(repaired, "]");
+        const missingBraces = opens(repaired, "{") - closes(repaired, "}");
+        for (let i = 0; i < missingBrackets; i++) repaired += "]";
+        for (let i = 0; i < missingBraces; i++) repaired += "}";
+        try {
+          parsed = JSON.parse(repaired);
+          console.log("[chat] JSON repair succeeded");
+        } catch {
+          console.error("[chat] JSON repair failed, returning as answer text");
+          return res.json({ mode: "answer", text: contentAfterThink || rawContent.trim(), rows: [], notes: [] });
+        }
       }
 
       // ── Validate + coerce ────────────────────────────────────────────────────
