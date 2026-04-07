@@ -1186,7 +1186,7 @@ For general answers:
 {"mode":"answer","text":"...","rows":[],"notes":[]}
 
 Do NOT search the web. Use only the text provided.
-Collapse to department-level rows when source has 20+ line items (unless admin asked for detail).
+AGGREGATION RULE: Each combination of grouping fields must appear as exactly ONE row. For revenue: group by Source + Category + Year, SUM the Budgeted Amount and Collected Amount. For departments: group by Department + Category + Year, SUM the amounts. NEVER output multiple rows with the same Source/Department + Category + Year — always merge them into one row with summed totals.
 Never auto-import. Return rows for admin review only.`;
 
       // ── Build message list for API ───────────────────────────────────────────
@@ -1327,6 +1327,33 @@ Never auto-import. Return rows for admin review only.`;
             "Year":            strField(r, "Year", "year"),
           }));
         }
+        // ── Aggregate duplicate rows ──────────────────────────────────────────
+        // AI sometimes returns individual line items instead of aggregated totals.
+        // Merge rows that share the same grouping key, summing numeric amounts.
+        if (dt === "revenue" || dt === "departments" || !dt) {
+          const keyFields = dt === "revenue"
+            ? ["Source", "Category", "Year"]
+            : ["Department", "Category", "Year"];
+          const sumFields = dt === "revenue"
+            ? ["Budgeted Amount", "Collected Amount"]
+            : ["Budgeted Amount", "Spent Amount"];
+          const grouped = new Map<string, any>();
+          for (const row of parsed.rows) {
+            const key = keyFields.map(k => String(row[k] ?? "").toLowerCase().trim()).join("|");
+            if (grouped.has(key)) {
+              const existing = grouped.get(key);
+              for (const sf of sumFields) {
+                const a = typeof existing[sf] === "number" ? existing[sf] : 0;
+                const b = typeof row[sf] === "number" ? row[sf] : 0;
+                existing[sf] = a + b || null;
+              }
+            } else {
+              grouped.set(key, { ...row });
+            }
+          }
+          parsed.rows = Array.from(grouped.values());
+        }
+
         parsed.confidence = typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : 0.7;
         parsed.questions = Array.isArray(parsed.questions) ? parsed.questions : [];
         parsed.notes = Array.isArray(parsed.notes) ? parsed.notes : [];
