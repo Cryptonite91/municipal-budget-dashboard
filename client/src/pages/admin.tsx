@@ -374,6 +374,14 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
   const [showSample, setShowSample] = useState(false);
   const [inputMode, setInputMode] = useState<"chat" | "csv">("csv");
 
+  // ── Field options for dropdowns ────────────────────────────────────
+  const { data: foAll = [] } = useQuery<FieldOption[]>({
+    queryKey: tKey("/api/field-options", slug),
+    queryFn: () => authFetch(`/api/field-options?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
+  });
+  const foByType = (ft: string) => foAll.filter(o => o.fieldType === ft).map(o => o.value);
+
   const scrollToBottom = () => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
 
   // ── File attach handler ──────────────────────────────────────────────────────
@@ -824,17 +832,46 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
                         <tbody>
                           {proposedRows.map((row, i) => (
                             <tr key={i} className="border-t hover:bg-muted/30">
-                              {cols.map(field => (
-                                <td key={field} className="px-1 py-1">
-                                  <input
-                                    className="w-full bg-transparent px-1.5 py-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
-                                    value={(row as any)[field] ?? ""}
-                                    onChange={e => updateRow(i, field, e.target.value)}
-                                    placeholder={optionalFields.includes(field) ? "optional" : ""}
-                                    data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
-                                  />
-                                </td>
-                              ))}
+                              {cols.map(field => {
+                                const val = (row as any)[field] ?? "";
+                                // Determine if this field should be a dropdown
+                                const deptOpts   = foByType("department");
+                                const srcOpts    = foByType("source");
+                                const dCatOpts   = foByType("dept_category");
+                                const rCatOpts   = foByType("rev_category");
+                                const dropdownOpts: string[] | null =
+                                  field === "Department"   ? deptOpts :
+                                  field === "Source"       ? srcOpts :
+                                  field === "Category"     ? (proposedDataType === "revenue" ? rCatOpts : dCatOpts) :
+                                  field === "Status"       ? ["on-track", "at-risk", "behind"] :
+                                  field === "Year"         ? [...SELECTABLE_YEARS] :
+                                  null;
+                                return (
+                                  <td key={field} className="px-1 py-1">
+                                    {dropdownOpts && dropdownOpts.length > 0 ? (
+                                      <select
+                                        className="w-full bg-transparent px-1.5 py-0.5 rounded border border-transparent hover:border-input focus:border-input focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
+                                        value={val}
+                                        onChange={e => updateRow(i, field, e.target.value)}
+                                        data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
+                                      >
+                                        {val === "" && <option value="">— select —</option>}
+                                        {dropdownOpts.map(opt => (
+                                          <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        className="w-full bg-transparent px-1.5 py-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-xs"
+                                        value={val}
+                                        onChange={e => updateRow(i, field, e.target.value)}
+                                        placeholder={optionalFields.includes(field) ? "optional" : ""}
+                                        data-testid={`row-${i}-${field.replace(/ /g,"-")}`}
+                                      />
+                                    )}
+                                  </td>
+                                );
+                              })}
                               <td className="px-1 py-1 text-center">
                                 <button onClick={() => removeRow(i)} className="text-muted-foreground hover:text-destructive">
                                   <X className="h-3 w-3" />

@@ -1260,14 +1260,48 @@ Never auto-import. Return rows for admin review only.`;
 
       if (mode === "import_proposal") {
         if (!Array.isArray(parsed.rows)) parsed.rows = [];
-        // Coerce each row to the exact 5-column schema
-        parsed.rows = parsed.rows.map((r: any) => ({
-          "Department": String(r["Department"] ?? r.department ?? ""),
-          "Category": String(r["Category"] ?? r.category ?? ""),
-          "Budgeted Amount": r["Budgeted Amount"] != null ? Number(String(r["Budgeted Amount"]).replace(/[^\d.-]/g, "")) || null : null,
-          "Spent Amount": r["Spent Amount"] != null ? Number(String(r["Spent Amount"]).replace(/[^\d.-]/g, "")) || null : null,
-          "Year": String(r["Year"] ?? r.year ?? ""),
-        }));
+        // Coerce each row to the correct schema based on detected dataType
+        const dt = parsed.dataType;
+        const numField = (r: any, ...keys: string[]) => {
+          for (const k of keys) {
+            if (r[k] != null && r[k] !== "") return Number(String(r[k]).replace(/[^\d.-]/g, "")) || null;
+          }
+          return null;
+        };
+        const strField = (r: any, ...keys: string[]) => {
+          for (const k of keys) {
+            if (r[k] != null && String(r[k]).trim() !== "") return String(r[k]).trim();
+          }
+          return "";
+        };
+        if (dt === "revenue") {
+          parsed.rows = parsed.rows.map((r: any) => ({
+            "Source":           strField(r, "Source", "source", "Name", "name"),
+            "Category":         strField(r, "Category", "category"),
+            "Budgeted Amount":  numField(r, "Budgeted Amount", "budgeted_amount", "budget"),
+            "Collected Amount": numField(r, "Collected Amount", "collected_amount", "actual", "collected"),
+            "Year":             strField(r, "Year", "year"),
+          }));
+        } else if (dt === "projects") {
+          parsed.rows = parsed.rows.map((r: any) => ({
+            "Name":             strField(r, "Name", "name"),
+            "Department":       strField(r, "Department", "department"),
+            "Total Budget":     numField(r, "Total Budget", "total_budget", "budget"),
+            "Spent To Date":    numField(r, "Spent To Date", "spent_to_date", "spent"),
+            "Percent Complete": numField(r, "Percent Complete", "percent_complete", "progress"),
+            "Status":           strField(r, "Status", "status") || "on-track",
+            "Year":             strField(r, "Year", "year"),
+          }));
+        } else {
+          // departments (default)
+          parsed.rows = parsed.rows.map((r: any) => ({
+            "Department":      strField(r, "Department", "department"),
+            "Category":        strField(r, "Category", "category"),
+            "Budgeted Amount": numField(r, "Budgeted Amount", "budgeted_amount", "budget"),
+            "Spent Amount":    numField(r, "Spent Amount", "spent_amount", "actual", "spent"),
+            "Year":            strField(r, "Year", "year"),
+          }));
+        }
         parsed.confidence = typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : 0.7;
         parsed.questions = Array.isArray(parsed.questions) ? parsed.questions : [];
         parsed.notes = Array.isArray(parsed.notes) ? parsed.notes : [];
