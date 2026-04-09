@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRevenue, useYears, formatCurrency } from "@/hooks/use-budget-data";
+import { getInitialYear } from "@/hooks/use-embed";
 import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
@@ -14,7 +15,7 @@ import { getCategoryColor } from "@/lib/chart-colors";
 
 export default function Revenue() {
   const { data: years } = useYears();
-  const [selectedYear, setSelectedYear] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>(getInitialYear);
   const activeYear = selectedYear || years?.[0] || "";
   const { data: revenue, isLoading } = useRevenue(activeYear);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);

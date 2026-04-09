@@ -25,6 +25,7 @@ import { getDeptColor } from "@/lib/chart-colors";
 // Colors imported from shared utility — deterministic, no fallbacks
 
 import { getDeptIcon } from "@/lib/dept-icons";
+import { getInitialYear } from "@/hooks/use-embed";
 
 function KpiCard({
   title,
@@ -156,7 +157,7 @@ function DollarBreakdown({ data, municipalityName }: { data: { name: string; bud
 
 export default function Dashboard() {
   const { data: years, isLoading: yearsLoading } = useYears();
-  const [selectedYear, setSelectedYear] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>(getInitialYear);
   const activeYear = selectedYear || years?.[0] || "";
   const { data: summary, isLoading } = useSummary(activeYear);
   const { data: muni } = useMunicipality();

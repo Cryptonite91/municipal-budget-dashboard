@@ -10,6 +10,7 @@ import { useDepartments, useYears, useSummary, formatCurrency } from "@/hooks/us
 import { CitizenEngagement } from "@/components/citizen-engagement";
 import { Info, ChevronDown, ChevronRight } from "lucide-react";
 import { getDeptIcon } from "@/lib/dept-icons";
+import { getInitialYear } from "@/hooks/use-embed";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { getDeptColor } from "@/lib/chart-colors";
 
@@ -19,7 +20,7 @@ import { getDeptColor } from "@/lib/chart-colors";
 
 export default function Spending() {
   const { data: years } = useYears();
-  const [selectedYear, setSelectedYear] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>(getInitialYear);
   const activeYear = selectedYear || years?.[0] || "";
   const { data: departments, isLoading } = useDepartments(activeYear);
   const { data: summary } = useSummary(activeYear);

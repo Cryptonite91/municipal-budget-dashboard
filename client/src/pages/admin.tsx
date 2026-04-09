@@ -1171,20 +1171,50 @@ function CommentModeration({ token, slug }: { token: string | null; slug: string
 }
 
 // ─── Subscribers + embed ──────────────────────────────────────────────────────
+const EMBED_VIEWS = [
+  { value: "overview", label: "Overview" },
+  { value: "revenue", label: "Revenue" },
+  { value: "spending", label: "Spending" },
+  { value: "comparison", label: "Comparison" },
+  { value: "projects", label: "Projects" },
+];
+
 function EngagementPanel({ token, slug }: { token: string | null; slug: string }) {
   const [showEmbed, setShowEmbed] = useState(false);
+  const [embedView, setEmbedView] = useState("overview");
+  const [embedYear, setEmbedYear] = useState("");
+  const [embedTheme, setEmbedTheme] = useState("");
+  const [copied, setCopied] = useState(false);
   const { data: subs = [] } = useQuery<EmailSubscriber[]>({
     queryKey: tKey("/api/subscribers", slug),
     queryFn: () => authFetch(`/api/subscribers?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
     retry: false,
   });
+  const { data: availYears = [] } = useQuery<string[]>({
+    queryKey: tKey("/api/years", slug),
+    queryFn: () => authFetch(`/api/years?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
+    retry: false,
+  });
 
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const embedParams = [`tenant=${slug}`, "embed=1", `view=${embedView}`];
+  if (embedYear) embedParams.push(`year=${embedYear}`);
+  if (embedTheme) embedParams.push(`theme=${embedTheme}`);
+  const embedSrc = `${origin}/?${embedParams.join("&")}`;
   const embedCode = `<iframe
-  src="${typeof window !== "undefined" ? `${window.location.origin}/?tenant=${slug}#/` : ""}" 
+  src="${embedSrc}"
   width="100%" height="700"
   style="border:none;border-radius:8px;"
-  title="Budget Transparency Dashboard"
-></iframe>`;
+  title="Civic.Finance Dashboard"
+></iframe>
+<script>
+window.addEventListener("message", function(e) {
+  if (e.data && e.data.type === "civic-finance-resize") {
+    var f = document.querySelector('iframe[src*="tenant=${slug}"]');
+    if (f) f.style.height = e.data.height + "px";
+  }
+});
+</script>`;
 
   return (
     <Card>
@@ -1233,11 +1263,60 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
             {showEmbed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </button>
           {showEmbed && (
-            <div className="mt-2 space-y-2">
-              <p className="text-xs text-muted-foreground">Paste this code into your municipality's website to embed the live dashboard.</p>
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-muted-foreground">Configure the embed, then copy the snippet into your town website. The iframe auto-resizes to fit its content.</p>
+              {/* Embed config controls */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">View</label>
+                  <select
+                    className="w-full h-8 rounded-md border bg-background px-2 text-xs"
+                    value={embedView}
+                    onChange={e => setEmbedView(e.target.value)}
+                    data-testid="select-embed-view"
+                  >
+                    {EMBED_VIEWS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Year</label>
+                  <select
+                    className="w-full h-8 rounded-md border bg-background px-2 text-xs"
+                    value={embedYear}
+                    onChange={e => setEmbedYear(e.target.value)}
+                    data-testid="select-embed-year"
+                  >
+                    <option value="">Latest</option>
+                    {availYears.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Theme</label>
+                  <select
+                    className="w-full h-8 rounded-md border bg-background px-2 text-xs"
+                    value={embedTheme}
+                    onChange={e => setEmbedTheme(e.target.value)}
+                    data-testid="select-embed-theme"
+                  >
+                    <option value="">Auto</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
               <pre className="text-xs bg-muted rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all select-all border">{embedCode}</pre>
-              <Button size="sm" variant="outline" className="w-full text-xs" onClick={() => { navigator.clipboard?.writeText(embedCode); }}>
-                Copy embed code
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full text-xs"
+                data-testid="btn-copy-embed"
+                onClick={() => {
+                  navigator.clipboard?.writeText(embedCode);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+              >
+                {copied ? <><CheckCircle2 className="h-3 w-3 mr-1" />Copied</> : <>Copy embed code</>}
               </Button>
             </div>
           )}

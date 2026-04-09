@@ -22,6 +22,8 @@ import { MunicipalityGate } from "@/components/municipality-gate";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
+import { useEmbedMode, type EmbedView } from "@/hooks/use-embed";
+import { useEffect, useRef } from "react";
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -87,14 +89,50 @@ function AppLayout() {
   );
 }
 
+// ── Embed-only layout: no sidebar, no header chrome ─────────────────────────────
+const VIEW_COMPONENTS: Record<EmbedView, React.ComponentType> = {
+  overview: Dashboard,
+  revenue: Revenue,
+  spending: Spending,
+  comparison: Comparison,
+  projects: Projects,
+};
+
+function EmbedLayout() {
+  const { view } = useEmbedMode();
+  const Component = VIEW_COMPONENTS[view] || Dashboard;
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // postMessage height resizer — notify parent iframe of content height
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const ro = new ResizeObserver(() => {
+      const h = wrapperRef.current?.scrollHeight ?? 0;
+      window.parent.postMessage({ type: "civic-finance-resize", height: h }, "*");
+    });
+    ro.observe(wrapperRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <MunicipalityGate>
+      <div ref={wrapperRef} className="min-h-screen bg-background">
+        <Component />
+      </div>
+    </MunicipalityGate>
+  );
+}
+
 function App() {
+  const { isEmbed } = useEmbedMode();
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ThemeProvider>
           <AuthProvider>
             <Router hook={useHashLocation}>
-              <AppLayout />
+              {isEmbed ? <EmbedLayout /> : <AppLayout />}
             </Router>
             <Toaster />
           </AuthProvider>
