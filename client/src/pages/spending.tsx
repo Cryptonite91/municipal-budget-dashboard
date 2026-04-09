@@ -8,21 +8,14 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useDepartments, useYears, useSummary, formatCurrency } from "@/hooks/use-budget-data";
 import { CitizenEngagement } from "@/components/citizen-engagement";
-import { Info, ChevronDown, ChevronRight, Shield, GraduationCap, Wrench, TreePine, Building2, Heart, BookOpen } from "lucide-react";
+import { Info, ChevronDown, ChevronRight } from "lucide-react";
+import { getDeptIcon } from "@/lib/dept-icons";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { getDeptColor } from "@/lib/chart-colors";
 
 // Colors imported from shared utility
 
-const DEPT_ICONS: Record<string, React.ReactNode> = {
-  "Education": <GraduationCap className="h-4 w-4" />,
-  "Public Safety": <Shield className="h-4 w-4" />,
-  "Public Works": <Wrench className="h-4 w-4" />,
-  "Parks & Recreation": <TreePine className="h-4 w-4" />,
-  "Administration": <Building2 className="h-4 w-4" />,
-  "Social Services": <Heart className="h-4 w-4" />,
-  "Library": <BookOpen className="h-4 w-4" />,
-};
+
 
 export default function Spending() {
   const { data: years } = useYears();
@@ -173,7 +166,7 @@ export default function Spending() {
                         style={{ backgroundColor: getDeptColor(dept.name) }}
                       />
                       <div className="flex items-center gap-1.5 text-muted-foreground shrink-0">
-                        {DEPT_ICONS[dept.name]}
+                        {getDeptIcon(dept.name)}
                       </div>
                       {isExpanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
                       <span className="text-sm font-medium flex-1 min-w-0 truncate">{dept.name}</span>

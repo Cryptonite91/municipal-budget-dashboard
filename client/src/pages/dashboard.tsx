@@ -18,28 +18,13 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
-  Shield,
-  GraduationCap,
-  Wrench,
-  TreePine,
-  Building2,
-  Heart,
-  BookOpen,
 } from "lucide-react";
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { getDeptColor } from "@/lib/chart-colors";
 
 // Colors imported from shared utility — deterministic, no fallbacks
 
-const DEPT_ICONS: Record<string, React.ReactNode> = {
-  "Education": <GraduationCap className="h-4 w-4" />,
-  "Public Safety": <Shield className="h-4 w-4" />,
-  "Public Works": <Wrench className="h-4 w-4" />,
-  "Parks & Recreation": <TreePine className="h-4 w-4" />,
-  "Administration": <Building2 className="h-4 w-4" />,
-  "Social Services": <Heart className="h-4 w-4" />,
-  "Library": <BookOpen className="h-4 w-4" />,
-};
+import { getDeptIcon } from "@/lib/dept-icons";
 
 function KpiCard({
   title,
@@ -153,7 +138,7 @@ function DollarBreakdown({ data, municipalityName }: { data: { name: string; bud
                   style={{ backgroundColor: getDeptColor(d.name) }}
                 />
                 <div className="flex items-center gap-1.5 text-muted-foreground">
-                  {DEPT_ICONS[d.name]}
+                  {getDeptIcon(d.name)}
                 </div>
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">{d.name}</span>
                 <span className="text-sm tabular-nums font-semibold">{d.percent}¢</span>

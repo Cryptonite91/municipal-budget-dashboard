@@ -21,7 +21,7 @@ import {
   Eye, EyeOff, Code2, MessageSquare, Mail, Trash2, ThumbsUp, ChevronDown,
   ChevronUp, FileSpreadsheet, Table, ArrowRight, Users, Globe,
   Sparkles, Loader2, AlertTriangle, Info, X, Building2, UserCircle2, Clock,
-  Calendar, Pencil, Save, Minus, Plus, Tag,
+  Calendar, Pencil, Save, Minus, Plus, Tag, Download,
 } from "lucide-react";
 
 import { API_BASE } from "@/lib/api-base";
@@ -667,6 +667,11 @@ function BudgetChatbot({ token, slug }: { token: string | null; slug: string }) 
       qc.invalidateQueries({ queryKey: tKey("/api/departments", slug) });
       qc.invalidateQueries({ queryKey: tKey("/api/revenue", slug) });
       qc.invalidateQueries({ queryKey: tKey("/api/projects", slug) });
+      // Refresh DataEditor year-specific queries + summary/years
+      qc.invalidateQueries({ queryKey: tKey(`/api/departments/${uploadYear}`, slug) });
+      qc.invalidateQueries({ queryKey: tKey(`/api/revenue/${uploadYear}`, slug) });
+      qc.invalidateQueries({ queryKey: tKey("/api/years", slug) });
+      qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
     } catch (e: any) {
       toast({ title: "Import failed", description: e.message, variant: "destructive" });
     } finally { setIsUploading(false); }
@@ -1192,10 +1197,29 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
           <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <Mail className="h-4 w-4 text-primary" />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="text-sm font-semibold">{subs.length} email subscriber{subs.length !== 1 ? "s" : ""}</p>
             <p className="text-xs text-muted-foreground">Residents opted in to budget update notifications</p>
           </div>
+          {subs.filter(s => s.active).length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs shrink-0"
+              data-testid="btn-export-subscribers"
+              onClick={() => {
+                const active = subs.filter(s => s.active);
+                const csv = "email,subscribed_at\n" + active.map(s => `${s.email},${s.subscribedAt}`).join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url; a.download = `subscribers_${slug}.csv`; a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download className="h-3 w-3 mr-1" />Export CSV
+            </Button>
+          )}
         </div>
 
         {/* Embed code */}
@@ -1241,6 +1265,7 @@ function EngagementPanel({ token, slug }: { token: string | null; slug: string }
 function YearManagementPanel({ token, slug }: { token: string | null; slug: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
   const [confirmYear, setConfirmYear] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -1259,7 +1284,6 @@ function YearManagementPanel({ token, slug }: { token: string | null; slug: stri
       const { departments, revenue } = await r.json();
       toast({ title: `Year ${confirmYear} deleted`, description: `Removed ${departments} dept + ${revenue} revenue records.` });
       qc.invalidateQueries({ queryKey: tKey("/api/years", slug) });
-      // Also invalidate dashboard summary so citizen view reflects the deletion
       qc.invalidateQueries({ queryKey: tKey("/api/summary", slug) });
     } catch (e: any) {
       toast({ title: "Delete failed", description: e.message, variant: "destructive" });
@@ -1271,39 +1295,53 @@ function YearManagementPanel({ token, slug }: { token: string | null; slug: stri
 
   return (
     <>
-      <Card data-testid="card-year-management">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-            Year Management
-          </CardTitle>
-          <CardDescription>All years with imported data for this municipality. Delete removes all department and revenue records for that year.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground"><Loader2 className="inline h-3.5 w-3.5 animate-spin mr-1.5" />Loading…</p>
-          ) : years.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No data imported yet.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {years.map(y => (
-                <div key={y} className="flex items-center justify-between p-2.5 rounded-md border bg-muted/20" data-testid={`year-row-${y}`}>
-                  <span className="text-sm font-medium tabular-nums">{y}</span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setConfirmYear(y)}
-                    data-testid={`btn-delete-year-${y}`}
-                  >
-                    <Minus className="h-3.5 w-3.5 mr-1" />Delete year
-                  </Button>
-                </div>
-              ))}
+      <div className="border rounded-xl overflow-hidden" data-testid="card-year-management">
+        <button
+          className="w-full flex items-center justify-between px-5 py-4 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+          onClick={() => setOpen(o => !o)}
+          data-testid="btn-toggle-year-management"
+        >
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Calendar className="h-4 w-4 text-primary" />
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <div>
+              <p className="text-sm font-semibold">Year Management</p>
+              <p className="text-xs text-muted-foreground">Delete removes all department and revenue records for that year</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {years.length > 0 && <Badge variant="outline" className="text-xs">{years.length} year{years.length !== 1 ? "s" : ""}</Badge>}
+            {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </div>
+        </button>
+        {open && (
+          <div className="p-5 border-t">
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground"><Loader2 className="inline h-3.5 w-3.5 animate-spin mr-1.5" />Loading…</p>
+            ) : years.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No data imported yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {years.map(y => (
+                  <div key={y} className="flex items-center justify-between p-2.5 rounded-md border bg-muted/20" data-testid={`year-row-${y}`}>
+                    <span className="text-sm font-medium tabular-nums">{y}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => setConfirmYear(y)}
+                      data-testid={`btn-delete-year-${y}`}
+                    >
+                      <Minus className="h-3.5 w-3.5 mr-1" />Delete year
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <AlertDialog open={!!confirmYear} onOpenChange={open => { if (!open) setConfirmYear(null); }}>
         <AlertDialogContent>
@@ -1335,6 +1373,7 @@ function YearManagementPanel({ token, slug }: { token: string | null; slug: stri
 function PopulationPanel({ token, slug }: { token: string | null; slug: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
   const { data: figures = [] } = useQuery<PopulationFigure[]>({
     queryKey: tKey("/api/population", slug),
     queryFn: () => authFetch(`/api/population?tenant=${slug}`, token).then(r => r.ok ? r.json() : []),
@@ -1375,58 +1414,72 @@ function PopulationPanel({ token, slug }: { token: string | null; slug: string }
   };
 
   return (
-    <Card data-testid="card-population">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Users className="h-4 w-4 text-muted-foreground" />
-          Population
-        </CardTitle>
-        <CardDescription>One figure per year. The Overview tab uses the matching year's figure (or latest available).</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Existing entries */}
-        {figures.length > 0 && (
-          <div className="divide-y rounded-lg border text-sm">
-            {figures.map(f => (
-              <div key={f.id} className="flex items-center justify-between px-3 py-2">
-                <div className="flex items-center gap-3">
-                  <Badge variant="outline" className="text-xs tabular-nums">{f.year}</Badge>
-                  <span className="tabular-nums">{f.population.toLocaleString()}</span>
-                </div>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => remove(f.id)} data-testid={`btn-del-pop-${f.id}`}>
-                  <Trash2 className="h-3 w-3 text-muted-foreground" />
-                </Button>
-              </div>
-            ))}
+    <div className="border rounded-xl overflow-hidden" data-testid="card-population">
+      <button
+        className="w-full flex items-center justify-between px-5 py-4 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+        onClick={() => setOpen(o => !o)}
+        data-testid="btn-toggle-population"
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Users className="h-4 w-4 text-primary" />
           </div>
-        )}
-        {/* Add new */}
-        <div className="flex items-center gap-2">
-          <select
-            className="h-8 w-24 rounded-md border bg-background px-2 text-sm"
-            value={addYear}
-            onChange={e => setAddYear(e.target.value)}
-            data-testid="select-pop-year"
-          >
-            <option value="">Year</option>
-            {SELECTABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <Input
-            type="number"
-            min={1}
-            placeholder="Population"
-            className="h-8 w-36 text-sm"
-            value={addPop}
-            onChange={e => setAddPop(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") save(); }}
-            data-testid="input-population"
-          />
-          <Button size="sm" className="h-8" onClick={save} disabled={saving} data-testid="btn-save-population">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" />Add</>}
-          </Button>
+          <div>
+            <p className="text-sm font-semibold">Population</p>
+            <p className="text-xs text-muted-foreground">One figure per year — Overview uses the matching year or latest available</p>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+        <div className="flex items-center gap-2">
+          {figures.length > 0 && <Badge variant="outline" className="text-xs">{figures.length} year{figures.length !== 1 ? "s" : ""}</Badge>}
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </div>
+      </button>
+      {open && (
+        <div className="p-5 border-t space-y-3">
+          {/* Existing entries */}
+          {figures.length > 0 && (
+            <div className="divide-y rounded-lg border text-sm">
+              {figures.map(f => (
+                <div key={f.id} className="flex items-center justify-between px-3 py-2">
+                  <div className="flex items-center gap-3">
+                    <Badge variant="outline" className="text-xs tabular-nums">{f.year}</Badge>
+                    <span className="tabular-nums">{f.population.toLocaleString()}</span>
+                  </div>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => remove(f.id)} data-testid={`btn-del-pop-${f.id}`}>
+                    <Trash2 className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Add new */}
+          <div className="flex items-center gap-2">
+            <select
+              className="h-8 w-24 rounded-md border bg-background px-2 text-sm"
+              value={addYear}
+              onChange={e => setAddYear(e.target.value)}
+              data-testid="select-pop-year"
+            >
+              <option value="">Year</option>
+              {SELECTABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <Input
+              type="number"
+              min={1}
+              placeholder="Population"
+              className="h-8 w-36 text-sm"
+              value={addPop}
+              onChange={e => setAddPop(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") save(); }}
+              data-testid="input-population"
+            />
+            <Button size="sm" className="h-8" onClick={save} disabled={saving} data-testid="btn-save-population">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" />Add</>}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1611,6 +1664,7 @@ function FieldOptionsPanel({ token, slug }: { token: string | null; slug: string
 }
 
 function UploadHistoryPanel({ token, slug }: { token: string | null; slug: string }) {
+  const [open, setOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 10;
@@ -1626,12 +1680,28 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
   const pageUploads = uploads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
-    <Card data-testid="card-import-history">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Import History</CardTitle>
-        <CardDescription>Click a batch to see the imported records.</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
+    <div className="border rounded-xl overflow-hidden" data-testid="card-import-history">
+      <button
+        className="w-full flex items-center justify-between px-5 py-4 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+        onClick={() => setOpen(o => !o)}
+        data-testid="btn-toggle-import-history"
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <FileText className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Import History</p>
+            <p className="text-xs text-muted-foreground">Click a batch to see the imported records</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-xs">{uploads.length} batch{uploads.length !== 1 ? "es" : ""}</Badge>
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </div>
+      </button>
+      {open && (
+      <div className="border-t">
         <div className="divide-y">
           {pageUploads.map(u => (
             <div key={u.id} data-testid={`batch-row-${u.id}`}>
@@ -1672,8 +1742,9 @@ function UploadHistoryPanel({ token, slug }: { token: string | null; slug: strin
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+      )}
+    </div>
   );
 }
 

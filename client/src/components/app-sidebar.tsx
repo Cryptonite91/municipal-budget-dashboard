@@ -68,7 +68,7 @@ export function AppSidebar() {
             viewBox="0 0 32 32"
             fill="none"
             className="w-7 h-7 shrink-0"
-            aria-label="Municipal Budget Dashboard"
+            aria-label="Civic.Finance"
           >
             <rect x="4" y="14" width="24" height="16" rx="1.5" fill="currentColor" opacity="0.15" />
             <rect x="8" y="18" width="4" height="6" rx="0.5" fill="currentColor" opacity="0.4" />
@@ -79,7 +79,7 @@ export function AppSidebar() {
           </svg>
           <div className="min-w-0">
             <p className="text-sm font-semibold truncate leading-tight">
-              Municipal Budget
+              Civic.Finance
             </p>
             <p className="text-xs opacity-60 truncate">Transparency Dashboard</p>
           </div>
